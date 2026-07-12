@@ -92,6 +92,13 @@
   .theme-panel-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
   .link-btn { background: none; border: none; color: var(--accent); font-size: 13px; cursor: pointer; padding: 0; text-align: left; }
 
+  .presence-bar { padding: 6px 16px; font-size: 12px; color: var(--text-muted); border-bottom: 1px solid var(--border); display: flex; gap: 14px; flex-wrap: wrap; }
+  .presence-item { display: flex; align-items: center; gap: 5px; }
+  .presence-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; }
+  .presence-dot.online { background: #4FA98C; }
+  .date-divider { text-align: center; font-size: 11.5px; color: var(--text-dim); margin: 14px 0 10px; }
+  .msg-time { font-size: 10.5px; opacity: 0.6; margin-left: 7px; white-space: nowrap; }
+
   #messages { flex: 1; overflow-y: auto; padding: 16px; background-size: cover; background-position: center; }
   .empty-state { text-align: center; color: var(--text-dim); font-size: 14px; margin-top: 60px; }
   .msg-row { display: flex; margin-bottom: 10px; animation: riseIn 0.25s ease-out; user-select: none; -webkit-user-select: none; }
@@ -204,6 +211,7 @@
       <input type="file" id="wallpaper-input" accept="image/*" style="display:none;" />
     </div>
   </header>
+  <div id="presence-bar" class="presence-bar hidden"></div>
 
   <div id="messages"></div>
   <div id="chat-error" style="display:none;"></div>
@@ -238,7 +246,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
-import { getDatabase, ref, push, onValue, off, update, remove } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-database.js";
+import { getDatabase, ref, push, onValue, off, update, remove, set, onDisconnect, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-database.js";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // --- Supabase (file storage only) ---
@@ -293,6 +301,37 @@ function subscribeRoom(roomHash, callback) {
     const messages = Object.entries(val).map(([id, m]) => ({ id, ...m }));
     messages.sort((a, b) => a.ts - b.ts);
     callback(messages);
+  };
+  onValue(r, handler);
+  return () => off(r, "value", handler);
+}
+
+// presence lives under a separate top-level path so it never mixes with message children
+function presenceUserKey(name) {
+  return encodeURIComponent(name).replace(/[.#$/[\]]/g, "_");
+}
+function presenceRoomRef(roomHash) { return ref(db, `presence/${roomHash}`); }
+function presenceUserRef(roomHash, name) { return ref(db, `presence/${roomHash}/${presenceUserKey(name)}`); }
+
+function trackPresence(roomHash, myName) {
+  const myRef = presenceUserRef(roomHash, myName);
+  const connectedRef = ref(db, ".info/connected");
+  const handler = (snap) => {
+    if (snap.val() === true) {
+      onDisconnect(myRef).set({ name: myName, online: false, lastSeen: serverTimestamp() });
+      set(myRef, { name: myName, online: true, lastSeen: serverTimestamp() });
+    }
+  };
+  onValue(connectedRef, handler);
+  return () => off(connectedRef, "value", handler);
+}
+
+function subscribePresence(roomHash, myName, callback) {
+  const r = presenceRoomRef(roomHash);
+  const handler = (snapshot) => {
+    const val = snapshot.val() || {};
+    const list = Object.values(val).filter((p) => p.name && p.name !== myName);
+    callback(list);
   };
   onValue(r, handler);
   return () => off(r, "value", handler);
@@ -412,6 +451,8 @@ function resizeImageToDataUrl(file, maxDim, quality) {
 let cryptoKey = null;
 let passphraseValue = "";
 let unsubscribe = null;
+let unsubscribePresenceTrack = null;
+let unsubscribePresenceList = null;
 const decryptedCache = new Map();
 const ownIds = new Set();
 let replyContext = null;   // { id, sender, text }
@@ -435,6 +476,7 @@ const wallpaperPickBtn = document.getElementById("wallpaper-pick-btn");
 const wallpaperResetBtn = document.getElementById("wallpaper-reset-btn");
 const wallpaperInput = document.getElementById("wallpaper-input");
 const messagesEl = document.getElementById("messages");
+const presenceBar = document.getElementById("presence-bar");
 const chatError = document.getElementById("chat-error");
 const draftInput = document.getElementById("draft");
 const sendBtn = document.getElementById("send-btn");
@@ -490,6 +532,44 @@ function formatSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
 }
 
+function formatTime(ts) {
+  const d = new Date(ts);
+  return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+}
+function isSameDay(a, b) {
+  const da = new Date(a), db_ = new Date(b);
+  return da.getFullYear() === db_.getFullYear() && da.getMonth() === db_.getMonth() && da.getDate() === db_.getDate();
+}
+function formatDateDivider(ts) {
+  const now = Date.now();
+  if (isSameDay(ts, now)) return "Сегодня";
+  if (isSameDay(ts, now - 86400000)) return "Вчера";
+  return new Date(ts).toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+}
+function formatLastSeen(ts) {
+  if (!ts) return "не в сети";
+  const diffMin = Math.floor((Date.now() - ts) / 60000);
+  if (diffMin < 1) return "был(а) только что";
+  if (diffMin < 60) return `был(а) ${diffMin} мин назад`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `был(а) ${diffH} ч назад`;
+  if (isSameDay(ts, Date.now() - 86400000)) return "был(а) вчера";
+  return `был(а) ${new Date(ts).toLocaleDateString("ru-RU", { day: "numeric", month: "short" })}`;
+}
+
+function renderPresence(list) {
+  if (!list || list.length === 0) {
+    presenceBar.classList.add("hidden");
+    presenceBar.innerHTML = "";
+    return;
+  }
+  presenceBar.classList.remove("hidden");
+  presenceBar.innerHTML = list.map((p) => {
+    const statusText = p.online ? "в сети" : formatLastSeen(p.lastSeen);
+    return `<div class="presence-item"><span class="presence-dot ${p.online ? "online" : ""}"></span>${escapeHtml(p.name)}: ${statusText}</div>`;
+  }).join("");
+}
+
 function renderMessages() {
   const myName = nameInput.value.trim();
   const list = Array.from(decryptedCache.entries())
@@ -501,7 +581,7 @@ function renderMessages() {
     return;
   }
 
-  messagesEl.innerHTML = list.map(m => {
+  messagesEl.innerHTML = list.map((m, idx) => {
     const editedTag = m.edited ? `<span class="edited-tag">изменено</span>` : "";
     const replyHtml = m.replyToId ? `
       <div class="reply-quote">
@@ -509,22 +589,26 @@ function renderMessages() {
         <span>${escapeHtml(truncate(m.replyToText || "", 80))}</span>
       </div>` : "";
 
+    const dividerHtml = (idx === 0 || !isSameDay(list[idx - 1].ts, m.ts))
+      ? `<div class="date-divider">${formatDateDivider(m.ts)}</div>` : "";
+    const timeHtml = `<span class="msg-time">${formatTime(m.ts)}</span>`;
+
     let bodyHtml;
     if (m.type === "file") {
-      bodyHtml = renderFileBody(m);
+      bodyHtml = renderFileBody(m) + timeHtml;
     } else {
-      bodyHtml = `<span>${linkify(escapeHtml(m.text))}</span>${editedTag}`;
+      bodyHtml = `<span>${linkify(escapeHtml(m.text))}</span>${editedTag}${timeHtml}`;
     }
 
     if (m.self) {
-      return `
+      return `${dividerHtml}
         <div class="msg-row self" data-id="${m.id}" data-self="true">
           <div class="msg-content">
             <div class="bubble self">${replyHtml}${bodyHtml}</div>
           </div>
         </div>`;
     }
-    return `
+    return `${dividerHtml}
       <div class="msg-row other" data-id="${m.id}" data-self="false">
         <div class="avatar" style="background:${avatarColor(m.sender)}">${escapeHtml(initials(m.sender))}</div>
         <div class="msg-content">
@@ -635,6 +719,8 @@ async function handleJoin() {
     if (rememberCheckbox.checked) { saveLogin(name, passphrase); } else { clearSavedLogin(); }
 
     unsubscribe = subscribeRoom(room, handleSnapshot);
+    unsubscribePresenceTrack = trackPresence(room, name);
+    unsubscribePresenceList = subscribePresence(room, name, renderPresence);
     joinScreen.classList.add("hidden");
     chatScreen.classList.remove("hidden");
   } catch (err) {
@@ -645,9 +731,19 @@ async function handleJoin() {
   }
 }
 
-function handleLeave() {
+async function handleLeave() {
   if (unsubscribe) unsubscribe();
   unsubscribe = null;
+  if (unsubscribePresenceList) unsubscribePresenceList();
+  unsubscribePresenceList = null;
+  if (unsubscribePresenceTrack) unsubscribePresenceTrack();
+  unsubscribePresenceTrack = null;
+  if (cryptoKey && passphraseValue && nameInput.value.trim()) {
+    try {
+      const room = await hashRoom(passphraseValue);
+      await set(presenceUserRef(room, nameInput.value.trim()), { name: nameInput.value.trim(), online: false, lastSeen: serverTimestamp() });
+    } catch {}
+  }
   cryptoKey = null;
   decryptedCache.clear();
   ownIds.clear();
@@ -657,6 +753,8 @@ function handleLeave() {
   rememberCheckbox.checked = true;
   forgetBtn.style.display = "none";
   themePanel.classList.add("hidden");
+  presenceBar.classList.add("hidden");
+  presenceBar.innerHTML = "";
   clearComposeContext();
   chatScreen.classList.add("hidden");
   joinScreen.classList.remove("hidden");
