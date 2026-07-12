@@ -116,6 +116,17 @@
   .compose-banner .cb-text b { color: var(--text); }
   .compose-banner button { background: none; border: none; color: var(--text-dim); font-size: 16px; cursor: pointer; flex-shrink: 0; }
 
+  .file-card { display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 2px 0; min-width: 160px; }
+  .file-icon { font-size: 22px; flex-shrink: 0; }
+  .file-info { display: flex; flex-direction: column; overflow: hidden; }
+  .file-name { font-size: 14px; font-weight: 500; word-break: break-all; }
+  .file-meta { font-size: 11.5px; opacity: 0.75; }
+  .file-image { max-width: 220px; max-height: 280px; border-radius: 10px; display: block; cursor: pointer; }
+  .file-video { max-width: 240px; border-radius: 10px; display: block; }
+  .file-download-link { color: inherit; text-decoration: underline; font-size: 13px; display: inline-block; margin-top: 4px; }
+  #attach-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; flex-shrink: 0; }
+  #attach-btn:disabled { opacity: 0.5; }
+
   .composer { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); flex-shrink: 0; }
   #draft { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 10px 16px; color: var(--text); font-size: 14.5px; outline: none; }
   #send-btn { width: 42px; height: 42px; border-radius: 50%; border: none; background: var(--surface); color: var(--text-dim); display: flex; align-items: center; justify-content: center; cursor: default; flex-shrink: 0; }
@@ -203,6 +214,10 @@
   </div>
 
   <div class="composer">
+    <button type="button" id="attach-btn" aria-label="Прикрепить файл">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+    </button>
+    <input type="file" id="file-input" style="display:none" accept="image/*,video/*,.pdf,.doc,.docx,.zip,.fb2" />
     <input id="draft" placeholder="Сообщение…" autocomplete="off" />
     <button id="send-btn" aria-label="Отправить">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -224,6 +239,27 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
 import { getDatabase, ref, push, onValue, off, update, remove } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-database.js";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+// --- Supabase (file storage only) ---
+const SUPABASE_URL = "https://alfgvgckpcwnkzlpnoit.supabase.co";
+const SUPABASE_KEY = "sb_publishable_soBH65doWx5J6ImyyAwOrw_payFwa1Z";
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const FILES_BUCKET = "whisper-files";
+const MAX_FILE_MB = 15;
+
+async function uploadEncryptedFile(path, encryptedBuf) {
+  const { error } = await supabase.storage.from(FILES_BUCKET).upload(path, new Blob([encryptedBuf]), {
+    contentType: "application/octet-stream",
+    upsert: false,
+  });
+  if (error) throw error;
+  const { data } = supabase.storage.from(FILES_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+async function deleteStoredFile(path) {
+  try { await supabase.storage.from(FILES_BUCKET).remove([path]); } catch {}
+}
 
 // --- Firebase ---
 const firebaseConfig = {
@@ -405,6 +441,8 @@ const sendBtn = document.getElementById("send-btn");
 const composeBanner = document.getElementById("compose-banner");
 const composeBannerText = document.getElementById("compose-banner-text");
 const composeBannerCancel = document.getElementById("compose-banner-cancel");
+const attachBtn = document.getElementById("attach-btn");
+const fileInput = document.getElementById("file-input");
 const sheetBackdrop = document.getElementById("sheet-backdrop");
 const actionSheet = document.getElementById("action-sheet");
 const actionReply = document.getElementById("action-reply");
@@ -434,6 +472,24 @@ function truncate(text, max) {
   return text.length > max ? text.slice(0, max).trim() + "…" : text;
 }
 
+function fileEmoji(mime, name) {
+  const m = mime || "";
+  const n = (name || "").toLowerCase();
+  if (m.startsWith("image/")) return "🖼";
+  if (m.startsWith("video/")) return "🎬";
+  if (m.includes("pdf") || n.endsWith(".pdf")) return "📕";
+  if (m.includes("word") || n.endsWith(".doc") || n.endsWith(".docx")) return "📄";
+  if (m.includes("zip") || n.endsWith(".zip")) return "🗜";
+  if (n.endsWith(".fb2")) return "📚";
+  return "📎";
+}
+function formatSize(bytes) {
+  if (!bytes && bytes !== 0) return "";
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+}
+
 function renderMessages() {
   const myName = nameInput.value.trim();
   const list = Array.from(decryptedCache.entries())
@@ -446,7 +502,6 @@ function renderMessages() {
   }
 
   messagesEl.innerHTML = list.map(m => {
-    const bodyHtml = linkify(escapeHtml(m.text));
     const editedTag = m.edited ? `<span class="edited-tag">изменено</span>` : "";
     const replyHtml = m.replyToId ? `
       <div class="reply-quote">
@@ -454,11 +509,18 @@ function renderMessages() {
         <span>${escapeHtml(truncate(m.replyToText || "", 80))}</span>
       </div>` : "";
 
+    let bodyHtml;
+    if (m.type === "file") {
+      bodyHtml = renderFileBody(m);
+    } else {
+      bodyHtml = `<span>${linkify(escapeHtml(m.text))}</span>${editedTag}`;
+    }
+
     if (m.self) {
       return `
         <div class="msg-row self" data-id="${m.id}" data-self="true">
           <div class="msg-content">
-            <div class="bubble self">${replyHtml}<span>${bodyHtml}</span>${editedTag}</div>
+            <div class="bubble self">${replyHtml}${bodyHtml}</div>
           </div>
         </div>`;
     }
@@ -467,11 +529,27 @@ function renderMessages() {
         <div class="avatar" style="background:${avatarColor(m.sender)}">${escapeHtml(initials(m.sender))}</div>
         <div class="msg-content">
           <span class="msg-sender">${escapeHtml(m.sender)}</span>
-          <div class="bubble other">${replyHtml}<span>${bodyHtml}</span>${editedTag}</div>
+          <div class="bubble other">${replyHtml}${bodyHtml}</div>
         </div>
       </div>`;
   }).join("");
   messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function renderFileBody(m) {
+  if (m.loadError) {
+    return `<div class="file-card" data-id="${m.id}"><div class="file-icon">⚠</div><div class="file-info"><div class="file-name">${escapeHtml(m.name || "файл")}</div><div class="file-meta">Не открылось — нажми, чтобы повторить</div></div></div>`;
+  }
+  if (m.blobUrl) {
+    if ((m.mime || "").startsWith("image/")) {
+      return `<img class="file-image" data-id="${m.id}" src="${m.blobUrl}" alt="${escapeHtml(m.name || "")}" />`;
+    }
+    if ((m.mime || "").startsWith("video/")) {
+      return `<video class="file-video" src="${m.blobUrl}" controls></video>`;
+    }
+    return `<div class="file-card"><div class="file-icon">${fileEmoji(m.mime, m.name)}</div><div class="file-info"><div class="file-name">${escapeHtml(m.name)}</div><div class="file-meta">${formatSize(m.size)}</div></div></div><a class="file-download-link" href="${m.blobUrl}" download="${escapeHtml(m.name || "file")}">⬇ Скачать ещё раз</a>`;
+  }
+  return `<div class="file-card" data-id="${m.id}"><div class="file-icon">${fileEmoji(m.mime, m.name)}</div><div class="file-info"><div class="file-name">${escapeHtml(m.name || "файл")}</div><div class="file-meta">${formatSize(m.size)} · ${m.loading ? "Загрузка…" : "Нажми, чтобы открыть"}</div></div></div>`;
 }
 
 async function handleSnapshot(raw) {
@@ -480,6 +558,29 @@ async function handleSnapshot(raw) {
 
   for (const m of raw) {
     if (!decryptedCache.has(m.id)) {
+      if (m.type === "file") {
+        try {
+          const metaJson = await decryptText(cryptoKey, m.metaIv, m.metaCt);
+          const meta = JSON.parse(metaJson);
+          let replyToText = null, replyToSender = null, replyToId = null;
+          if (m.replyTo) {
+            replyToId = m.replyTo.id;
+            replyToSender = m.replyTo.sender;
+            try { replyToText = await decryptText(cryptoKey, m.replyTo.iv, m.replyTo.ct); }
+            catch { replyToText = "⚠"; }
+          }
+          decryptedCache.set(m.id, {
+            type: "file", sender: m.sender, ts: m.ts,
+            name: meta.name, mime: meta.mime, size: m.size,
+            url: m.url, path: m.path, fileIv: m.fileIv,
+            blobUrl: null, loading: false, loadError: false,
+            replyToId, replyToSender, replyToText,
+          });
+        } catch {
+          decryptedCache.set(m.id, { type: "file", sender: m.sender, ts: m.ts, name: "не удалось расшифровать", mime: "", size: m.size, url: m.url, path: m.path, fileIv: m.fileIv, blobUrl: null, loading: false, loadError: true });
+        }
+        continue;
+      }
       try {
         const text = await decryptText(cryptoKey, m.iv, m.ct);
         let replyToText = null, replyToSender = null, replyToId = null;
@@ -494,9 +595,9 @@ async function handleSnapshot(raw) {
         decryptedCache.set(m.id, { sender: m.sender, text: "⚠ не удалось расшифровать", ts: m.ts, edited: !!m.edited });
       }
     } else {
-      // reflect edits on already-cached messages
+      // reflect text edits on already-cached messages (files are never edited)
       const cached = decryptedCache.get(m.id);
-      if (!!m.edited !== cached.edited) {
+      if (cached.type !== "file" && !!m.edited !== cached.edited) {
         try {
           const text = await decryptText(cryptoKey, m.iv, m.ct);
           decryptedCache.set(m.id, { ...cached, text, edited: !!m.edited });
@@ -572,9 +673,10 @@ function startReply(id) {
   const m = decryptedCache.get(id);
   if (!m) return;
   editingId = null;
-  replyContext = { id, sender: m.sender, text: m.text };
+  const previewText = m.type === "file" ? `📎 ${m.name || "файл"}` : m.text;
+  replyContext = { id, sender: m.sender, text: previewText };
   composeBanner.classList.remove("hidden");
-  composeBannerText.innerHTML = `Ответ <b>${escapeHtml(m.sender)}</b>: ${escapeHtml(truncate(m.text, 50))}`;
+  composeBannerText.innerHTML = `Ответ <b>${escapeHtml(m.sender)}</b>: ${escapeHtml(truncate(previewText, 50))}`;
   draftInput.focus();
 }
 
@@ -625,6 +727,83 @@ function updateSendBtnState() {
   sendBtn.style.cursor = active ? "pointer" : "default";
 }
 
+async function handleFileSelected(file) {
+  if (!file || !cryptoKey) return;
+  if (file.size > MAX_FILE_MB * 1024 * 1024) {
+    showChatError(`Файл больше ${MAX_FILE_MB} МБ — попробуй сжать или отправить по-другому.`);
+    fileInput.value = "";
+    return;
+  }
+  showChatError("");
+  attachBtn.disabled = true;
+  try {
+    const room = await hashRoom(passphraseValue);
+    const fileBuf = await file.arrayBuffer();
+    const fileIvArr = crypto.getRandomValues(new Uint8Array(12));
+    const encBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv: fileIvArr }, cryptoKey, fileBuf);
+    const path = `${room}/${crypto.randomUUID()}`;
+    const url = await uploadEncryptedFile(path, encBuf);
+
+    const metaJson = JSON.stringify({ name: file.name, mime: file.type || "application/octet-stream" });
+    const { iv: metaIv, ct: metaCt } = await encryptText(cryptoKey, metaJson);
+
+    const entry = {
+      sender: nameInput.value.trim(), ts: Date.now(), type: "file",
+      metaIv, metaCt, fileIv: toB64(fileIvArr), url, path, size: file.size,
+    };
+    if (replyContext) {
+      const rc = await encryptText(cryptoKey, truncate(replyContext.text, 200));
+      entry.replyTo = { id: replyContext.id, sender: replyContext.sender, iv: rc.iv, ct: rc.ct };
+    }
+    const id = await sendMessage(room, entry);
+    ownIds.add(id);
+  } catch {
+    showChatError("Не получилось отправить файл — проверь соединение и попробуй снова.");
+  } finally {
+    attachBtn.disabled = false;
+    fileInput.value = "";
+    clearComposeContext();
+  }
+}
+
+async function openFile(id) {
+  const m = decryptedCache.get(id);
+  if (!m || m.type !== "file" || m.blobUrl || m.loading) return;
+  m.loading = true;
+  m.loadError = false;
+  renderMessages();
+  try {
+    const resp = await fetch(m.url);
+    if (!resp.ok) throw new Error("fetch failed");
+    const encBuf = await resp.arrayBuffer();
+    const plainBuf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64(m.fileIv) }, cryptoKey, encBuf);
+    const blob = new Blob([plainBuf], { type: m.mime || "application/octet-stream" });
+    m.blobUrl = URL.createObjectURL(blob);
+    m.loading = false;
+    renderMessages();
+    if (!(m.mime || "").startsWith("image/") && !(m.mime || "").startsWith("video/")) {
+      const a = document.createElement("a");
+      a.href = m.blobUrl;
+      a.download = m.name || "file";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+  } catch {
+    m.loading = false;
+    m.loadError = true;
+    renderMessages();
+    showChatError("Не получилось открыть файл.");
+  }
+}
+
+messagesEl.addEventListener("click", (e) => {
+  const card = e.target.closest(".file-card[data-id]");
+  if (card) { openFile(card.dataset.id); return; }
+  const img = e.target.closest(".file-image[data-id]");
+  if (img) { window.open(img.src, "_blank"); return; }
+});
+
 // --- long-press action sheet ---
 let pressTimer = null;
 let pressStartXY = null;
@@ -653,7 +832,10 @@ messagesEl.addEventListener("pointermove", (e) => {
 
 function openActionSheet(id, isSelf) {
   activeSheetId = id;
-  actionEdit.style.display = isSelf ? "block" : "none";
+  const m = decryptedCache.get(id);
+  const isFile = !!(m && m.type === "file");
+  actionCopy.style.display = isFile ? "none" : "block";
+  actionEdit.style.display = (isSelf && !isFile) ? "block" : "none";
   actionDelete.style.display = isSelf ? "block" : "none";
   sheetBackdrop.classList.remove("hidden");
   actionSheet.classList.remove("hidden");
@@ -672,7 +854,7 @@ actionReply.addEventListener("click", () => {
 });
 actionCopy.addEventListener("click", async () => {
   const m = activeSheetId && decryptedCache.get(activeSheetId);
-  if (m) {
+  if (m && m.type !== "file") {
     try { await navigator.clipboard.writeText(m.text); } catch {}
   }
   closeActionSheet();
@@ -683,15 +865,24 @@ actionEdit.addEventListener("click", () => {
 });
 actionDelete.addEventListener("click", async () => {
   const id = activeSheetId;
+  const m = id && decryptedCache.get(id);
   closeActionSheet();
   if (!id) return;
   if (!window.confirm("Удалить сообщение у всех участников комнаты?")) return;
   try {
     const room = await hashRoom(passphraseValue);
+    if (m && m.type === "file" && m.path) {
+      await deleteStoredFile(m.path);
+    }
     await deleteMessage(room, id);
   } catch {
     showChatError("Не получилось удалить сообщение.");
   }
+});
+attachBtn.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (file) handleFileSelected(file);
 });
 
 joinBtn.addEventListener("click", handleJoin);
