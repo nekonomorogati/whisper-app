@@ -660,6 +660,9 @@ async function handleSnapshot(raw) {
             blobUrl: null, loading: false, loadError: false,
             replyToId, replyToSender, replyToText,
           });
+          if ((meta.mime || "").startsWith("image/")) {
+            openFile(m.id); // fire-and-forget: shows a thumbnail automatically
+          }
         } catch {
           decryptedCache.set(m.id, { type: "file", sender: m.sender, ts: m.ts, name: "не удалось расшифровать", mime: "", size: m.size, url: m.url, path: m.path, fileIv: m.fileIv, blobUrl: null, loading: false, loadError: true });
         }
@@ -880,12 +883,24 @@ async function openFile(id) {
     m.loading = false;
     renderMessages();
     if (!(m.mime || "").startsWith("image/") && !(m.mime || "").startsWith("video/")) {
-      const a = document.createElement("a");
-      a.href = m.blobUrl;
-      a.download = m.name || "file";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      const fileForShare = new File([blob], m.name || "file", { type: m.mime || "application/octet-stream" });
+      let shared = false;
+      if (navigator.canShare && navigator.canShare({ files: [fileForShare] })) {
+        try {
+          await navigator.share({ files: [fileForShare], title: m.name || "file" });
+          shared = true;
+        } catch {
+          shared = false; // user cancelled or share failed — fall back to download below
+        }
+      }
+      if (!shared) {
+        const a = document.createElement("a");
+        a.href = m.blobUrl;
+        a.download = m.name || "file";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
     }
   } catch {
     m.loading = false;
