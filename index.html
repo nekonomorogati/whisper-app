@@ -50,6 +50,7 @@
   .breathe { animation: breathe 3s ease-in-out infinite; }
   @keyframes breathe { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
   @keyframes riseIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
 
   .screen { display: flex; flex-direction: column; height: 100vh; }
   .hidden { display: none !important; }
@@ -93,21 +94,39 @@
 
   #messages { flex: 1; overflow-y: auto; padding: 16px; background-size: cover; background-position: center; }
   .empty-state { text-align: center; color: var(--text-dim); font-size: 14px; margin-top: 60px; }
-  .msg-row { display: flex; margin-bottom: 10px; animation: riseIn 0.25s ease-out; }
+  .msg-row { display: flex; margin-bottom: 10px; animation: riseIn 0.25s ease-out; user-select: none; -webkit-user-select: none; }
   .msg-row.self { flex-direction: column; align-items: flex-end; }
   .msg-row.other { flex-direction: row; align-items: flex-end; gap: 8px; }
-  .msg-content { display: flex; flex-direction: column; align-items: flex-start; }
+  .msg-content { display: flex; flex-direction: column; align-items: flex-start; max-width: 78%; }
+  .msg-row.self .msg-content { align-items: flex-end; max-width: 78%; }
   .avatar { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: #fff; flex-shrink: 0; }
   .msg-sender { font-size: 11px; color: var(--text-muted); margin-bottom: 3px; margin-left: 4px; }
   .bubble { max-width: 100%; padding: 9px 13px; font-size: 14.5px; line-height: 1.4; word-break: break-word; }
   .bubble.self { border-radius: 14px 14px 3px 14px; background: var(--accent); color: var(--accent-text); }
   .bubble.other { border-radius: 14px 14px 14px 3px; background: var(--surface); color: var(--text); }
+  .bubble a { color: inherit; text-decoration: underline; }
+  .reply-quote { border-left: 3px solid currentColor; opacity: 0.75; padding: 3px 0 3px 8px; margin-bottom: 5px; font-size: 12.5px; line-height: 1.3; }
+  .reply-quote .rq-sender { font-weight: 600; display: block; }
+  .edited-tag { font-size: 10.5px; opacity: 0.65; margin-left: 6px; }
 
   #chat-error { color: var(--error); font-size: 12.5px; padding: 0 16px 6px; text-align: center; }
+
+  .compose-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 14px; background: var(--surface); border-top: 1px solid var(--border); font-size: 12.5px; }
+  .compose-banner .cb-text { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .compose-banner .cb-text b { color: var(--text); }
+  .compose-banner button { background: none; border: none; color: var(--text-dim); font-size: 16px; cursor: pointer; flex-shrink: 0; }
+
   .composer { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); flex-shrink: 0; }
   #draft { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 10px 16px; color: var(--text); font-size: 14.5px; outline: none; }
   #send-btn { width: 42px; height: 42px; border-radius: 50%; border: none; background: var(--surface); color: var(--text-dim); display: flex; align-items: center; justify-content: center; cursor: default; flex-shrink: 0; }
   #send-btn.active { background: var(--accent); color: var(--accent-text); cursor: pointer; }
+
+  /* action sheet */
+  .sheet-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 20; }
+  .action-sheet { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface); border-radius: 16px 16px 0 0; padding: 8px 0 max(8px, env(safe-area-inset-bottom)); z-index: 21; animation: sheetUp 0.2s ease-out; }
+  .action-sheet button { display: block; width: 100%; background: none; border: none; color: var(--text); font-size: 15.5px; padding: 14px 20px; text-align: left; cursor: pointer; }
+  .action-sheet button.danger { color: var(--error); }
+  .action-sheet hr { border: none; height: 1px; background: var(--border); margin: 4px 0; }
 </style>
 </head>
 <body>
@@ -136,7 +155,7 @@
 
     <div class="note">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" stroke-width="2" style="flex-shrink:0;margin-top:1px;"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>
-      <span>Сообщения шифруются в браузере до отправки. Firebase хранит только шифротекст. Данные для входа при желании сохраняются прямо на этом телефоне — не отправляются никуда ещё.</span>
+      <span>Сообщения шифруются в браузере до отправки. Firebase хранит только шифротекст. Данные для входа при желании сохраняются прямо на этом телефоне.</span>
     </div>
   </div>
 </div>
@@ -178,6 +197,11 @@
   <div id="messages"></div>
   <div id="chat-error" style="display:none;"></div>
 
+  <div id="compose-banner" class="compose-banner hidden">
+    <div class="cb-text" id="compose-banner-text"></div>
+    <button type="button" id="compose-banner-cancel" aria-label="Отмена">✕</button>
+  </div>
+
   <div class="composer">
     <input id="draft" placeholder="Сообщение…" autocomplete="off" />
     <button id="send-btn" aria-label="Отправить">
@@ -186,9 +210,20 @@
   </div>
 </div>
 
+<div id="sheet-backdrop" class="sheet-backdrop hidden"></div>
+<div id="action-sheet" class="action-sheet hidden">
+  <button type="button" id="action-reply">Ответить</button>
+  <button type="button" id="action-copy">Копировать текст</button>
+  <button type="button" id="action-edit">Изменить</button>
+  <hr />
+  <button type="button" id="action-delete" class="danger">Удалить</button>
+  <hr />
+  <button type="button" id="action-cancel">Отмена</button>
+</div>
+
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
-import { getDatabase, ref, push, onValue, off } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-database.js";
+import { getDatabase, ref, push, onValue, off, update, remove } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-database.js";
 
 // --- Firebase ---
 const firebaseConfig = {
@@ -204,9 +239,16 @@ const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
 function roomRef(roomHash) { return ref(db, `rooms/${roomHash}`); }
+function messageRef(roomHash, id) { return ref(db, `rooms/${roomHash}/${id}`); }
 async function sendMessage(roomHash, entry) {
   const newRef = await push(roomRef(roomHash), entry);
   return newRef.key;
+}
+async function updateMessage(roomHash, id, patch) {
+  return update(messageRef(roomHash, id), patch);
+}
+async function deleteMessage(roomHash, id) {
+  return remove(messageRef(roomHash, id));
 }
 function subscribeRoom(roomHash, callback) {
   const r = roomRef(roomHash);
@@ -336,6 +378,9 @@ let passphraseValue = "";
 let unsubscribe = null;
 const decryptedCache = new Map();
 const ownIds = new Set();
+let replyContext = null;   // { id, sender, text }
+let editingId = null;      // id of message currently being edited
+let activeSheetId = null;  // message id the action sheet refers to
 
 // --- DOM refs ---
 const joinScreen = document.getElementById("join-screen");
@@ -357,9 +402,37 @@ const messagesEl = document.getElementById("messages");
 const chatError = document.getElementById("chat-error");
 const draftInput = document.getElementById("draft");
 const sendBtn = document.getElementById("send-btn");
+const composeBanner = document.getElementById("compose-banner");
+const composeBannerText = document.getElementById("compose-banner-text");
+const composeBannerCancel = document.getElementById("compose-banner-cancel");
+const sheetBackdrop = document.getElementById("sheet-backdrop");
+const actionSheet = document.getElementById("action-sheet");
+const actionReply = document.getElementById("action-reply");
+const actionCopy = document.getElementById("action-copy");
+const actionEdit = document.getElementById("action-edit");
+const actionDelete = document.getElementById("action-delete");
+const actionCancel = document.getElementById("action-cancel");
 
 function showJoinError(msg) { joinError.textContent = msg; joinError.style.display = msg ? "block" : "none"; }
 function showChatError(msg) { chatError.textContent = msg; chatError.style.display = msg ? "block" : "none"; }
+
+function escapeHtml(str) {
+  const d = document.createElement("div");
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+function linkify(escapedText) {
+  return escapedText.replace(/(https?:\/\/[^\s<]+)/g, (url) => {
+    const clean = url.replace(/[.,;:!?)\]]+$/, "");
+    const trailing = url.slice(clean.length);
+    return `<a href="${clean}" target="_blank" rel="noopener noreferrer">${clean}</a>${trailing}`;
+  });
+}
+
+function truncate(text, max) {
+  return text.length > max ? text.slice(0, max).trim() + "…" : text;
+}
 
 function renderMessages() {
   const myName = nameInput.value.trim();
@@ -371,43 +444,72 @@ function renderMessages() {
     messagesEl.innerHTML = `<div class="empty-state">Пока тихо. Напишите первое сообщение —<br/>остальные увидят его мгновенно.</div>`;
     return;
   }
+
   messagesEl.innerHTML = list.map(m => {
+    const bodyHtml = linkify(escapeHtml(m.text));
+    const editedTag = m.edited ? `<span class="edited-tag">изменено</span>` : "";
+    const replyHtml = m.replyToId ? `
+      <div class="reply-quote">
+        <span class="rq-sender">${escapeHtml(m.replyToSender || "")}</span>
+        <span>${escapeHtml(truncate(m.replyToText || "", 80))}</span>
+      </div>` : "";
+
     if (m.self) {
       return `
-        <div class="msg-row self">
-          <div class="bubble self">${escapeHtml(m.text)}</div>
+        <div class="msg-row self" data-id="${m.id}" data-self="true">
+          <div class="msg-content">
+            <div class="bubble self">${replyHtml}<span>${bodyHtml}</span>${editedTag}</div>
+          </div>
         </div>`;
     }
     return `
-      <div class="msg-row other">
+      <div class="msg-row other" data-id="${m.id}" data-self="false">
         <div class="avatar" style="background:${avatarColor(m.sender)}">${escapeHtml(initials(m.sender))}</div>
         <div class="msg-content">
           <span class="msg-sender">${escapeHtml(m.sender)}</span>
-          <div class="bubble other">${escapeHtml(m.text)}</div>
+          <div class="bubble other">${replyHtml}<span>${bodyHtml}</span>${editedTag}</div>
         </div>
       </div>`;
   }).join("");
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-function escapeHtml(str) {
-  const d = document.createElement("div");
-  d.textContent = str;
-  return d.innerHTML;
-}
-
 async function handleSnapshot(raw) {
   if (!cryptoKey) return;
+  const rawIds = new Set(raw.map((m) => m.id));
+
   for (const m of raw) {
     if (!decryptedCache.has(m.id)) {
       try {
         const text = await decryptText(cryptoKey, m.iv, m.ct);
-        decryptedCache.set(m.id, { sender: m.sender, text, ts: m.ts });
+        let replyToText = null, replyToSender = null, replyToId = null;
+        if (m.replyTo) {
+          replyToId = m.replyTo.id;
+          replyToSender = m.replyTo.sender;
+          try { replyToText = await decryptText(cryptoKey, m.replyTo.iv, m.replyTo.ct); }
+          catch { replyToText = "⚠"; }
+        }
+        decryptedCache.set(m.id, { sender: m.sender, text, ts: m.ts, edited: !!m.edited, replyToId, replyToSender, replyToText });
       } catch {
-        decryptedCache.set(m.id, { sender: m.sender, text: "⚠ не удалось расшифровать", ts: m.ts });
+        decryptedCache.set(m.id, { sender: m.sender, text: "⚠ не удалось расшифровать", ts: m.ts, edited: !!m.edited });
+      }
+    } else {
+      // reflect edits on already-cached messages
+      const cached = decryptedCache.get(m.id);
+      if (!!m.edited !== cached.edited) {
+        try {
+          const text = await decryptText(cryptoKey, m.iv, m.ct);
+          decryptedCache.set(m.id, { ...cached, text, edited: !!m.edited });
+        } catch {}
       }
     }
   }
+
+  // remove messages that were deleted elsewhere
+  for (const id of Array.from(decryptedCache.keys())) {
+    if (!rawIds.has(id)) decryptedCache.delete(id);
+  }
+
   renderMessages();
 }
 
@@ -454,8 +556,38 @@ function handleLeave() {
   rememberCheckbox.checked = true;
   forgetBtn.style.display = "none";
   themePanel.classList.add("hidden");
+  clearComposeContext();
   chatScreen.classList.add("hidden");
   joinScreen.classList.remove("hidden");
+}
+
+function clearComposeContext() {
+  replyContext = null;
+  editingId = null;
+  composeBanner.classList.add("hidden");
+  composeBannerText.innerHTML = "";
+}
+
+function startReply(id) {
+  const m = decryptedCache.get(id);
+  if (!m) return;
+  editingId = null;
+  replyContext = { id, sender: m.sender, text: m.text };
+  composeBanner.classList.remove("hidden");
+  composeBannerText.innerHTML = `Ответ <b>${escapeHtml(m.sender)}</b>: ${escapeHtml(truncate(m.text, 50))}`;
+  draftInput.focus();
+}
+
+function startEdit(id) {
+  const m = decryptedCache.get(id);
+  if (!m) return;
+  replyContext = null;
+  editingId = id;
+  composeBanner.classList.remove("hidden");
+  composeBannerText.innerHTML = `Редактирование сообщения`;
+  draftInput.value = m.text;
+  updateSendBtnState();
+  draftInput.focus();
 }
 
 async function handleSend() {
@@ -463,15 +595,27 @@ async function handleSend() {
   if (!text || !cryptoKey) return;
   draftInput.value = "";
   updateSendBtnState();
+  const room = await hashRoom(passphraseValue);
+
   try {
-    const { iv, ct } = await encryptText(cryptoKey, text);
-    const room = await hashRoom(passphraseValue);
-    const entry = { sender: nameInput.value.trim(), iv, ct, ts: Date.now() };
-    const id = await sendMessage(room, entry);
-    ownIds.add(id);
+    if (editingId) {
+      const { iv, ct } = await encryptText(cryptoKey, text);
+      await updateMessage(room, editingId, { iv, ct, edited: true });
+    } else {
+      const { iv, ct } = await encryptText(cryptoKey, text);
+      const entry = { sender: nameInput.value.trim(), iv, ct, ts: Date.now() };
+      if (replyContext) {
+        const rc = await encryptText(cryptoKey, truncate(replyContext.text, 200));
+        entry.replyTo = { id: replyContext.id, sender: replyContext.sender, iv: rc.iv, ct: rc.ct };
+      }
+      const id = await sendMessage(room, entry);
+      ownIds.add(id);
+    }
     showChatError("");
   } catch {
     showChatError("Сообщение не отправилось — проверь соединение и попробуй снова.");
+  } finally {
+    clearComposeContext();
   }
 }
 
@@ -481,12 +625,82 @@ function updateSendBtnState() {
   sendBtn.style.cursor = active ? "pointer" : "default";
 }
 
+// --- long-press action sheet ---
+let pressTimer = null;
+let pressStartXY = null;
+
+function findRow(target) {
+  return target.closest(".msg-row[data-id]");
+}
+
+messagesEl.addEventListener("pointerdown", (e) => {
+  const row = findRow(e.target);
+  if (!row) return;
+  pressStartXY = { x: e.clientX, y: e.clientY };
+  pressTimer = setTimeout(() => {
+    openActionSheet(row.dataset.id, row.dataset.self === "true");
+  }, 450);
+});
+["pointerup", "pointercancel", "pointerleave"].forEach((evt) => {
+  messagesEl.addEventListener(evt, () => { clearTimeout(pressTimer); });
+});
+messagesEl.addEventListener("pointermove", (e) => {
+  if (!pressStartXY) return;
+  const dx = Math.abs(e.clientX - pressStartXY.x);
+  const dy = Math.abs(e.clientY - pressStartXY.y);
+  if (dx > 10 || dy > 10) clearTimeout(pressTimer);
+});
+
+function openActionSheet(id, isSelf) {
+  activeSheetId = id;
+  actionEdit.style.display = isSelf ? "block" : "none";
+  actionDelete.style.display = isSelf ? "block" : "none";
+  sheetBackdrop.classList.remove("hidden");
+  actionSheet.classList.remove("hidden");
+}
+function closeActionSheet() {
+  activeSheetId = null;
+  sheetBackdrop.classList.add("hidden");
+  actionSheet.classList.add("hidden");
+}
+
+sheetBackdrop.addEventListener("click", closeActionSheet);
+actionCancel.addEventListener("click", closeActionSheet);
+actionReply.addEventListener("click", () => {
+  if (activeSheetId) startReply(activeSheetId);
+  closeActionSheet();
+});
+actionCopy.addEventListener("click", async () => {
+  const m = activeSheetId && decryptedCache.get(activeSheetId);
+  if (m) {
+    try { await navigator.clipboard.writeText(m.text); } catch {}
+  }
+  closeActionSheet();
+});
+actionEdit.addEventListener("click", () => {
+  if (activeSheetId) startEdit(activeSheetId);
+  closeActionSheet();
+});
+actionDelete.addEventListener("click", async () => {
+  const id = activeSheetId;
+  closeActionSheet();
+  if (!id) return;
+  if (!window.confirm("Удалить сообщение у всех участников комнаты?")) return;
+  try {
+    const room = await hashRoom(passphraseValue);
+    await deleteMessage(room, id);
+  } catch {
+    showChatError("Не получилось удалить сообщение.");
+  }
+});
+
 joinBtn.addEventListener("click", handleJoin);
 passInput.addEventListener("keydown", (e) => { if (e.key === "Enter") handleJoin(); });
 leaveBtn.addEventListener("click", handleLeave);
 sendBtn.addEventListener("click", handleSend);
 draftInput.addEventListener("keydown", (e) => { if (e.key === "Enter") handleSend(); });
 draftInput.addEventListener("input", updateSendBtnState);
+composeBannerCancel.addEventListener("click", clearComposeContext);
 forgetBtn.addEventListener("click", () => {
   clearSavedLogin();
   nameInput.value = "";
