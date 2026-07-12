@@ -79,15 +79,19 @@
   .header-right .who { display: flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: 12px; }
   #theme-btn, #leave-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; display: flex; }
 
-  .theme-panel { position: absolute; top: 54px; right: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px; display: flex; gap: 10px; z-index: 10; }
+  .theme-panel { position: absolute; top: 54px; right: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; z-index: 10; min-width: 180px; }
+  .swatch-row { display: flex; gap: 10px; }
   .swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
   .swatch.active { border-color: var(--text); }
   .swatch-midnight { background: linear-gradient(135deg, #12151A 50%, #4FA98C 50%); }
   .swatch-forest { background: linear-gradient(135deg, #0F1712 50%, #6FBF73 50%); }
   .swatch-plum { background: linear-gradient(135deg, #181220 50%, #B98BD6 50%); }
   .swatch-light { background: linear-gradient(135deg, #F5F3EE 50%, #3E8E7E 50%); }
+  .theme-panel-divider { height: 1px; background: var(--border); border: none; margin: 0; }
+  .theme-panel-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  .link-btn { background: none; border: none; color: var(--accent); font-size: 13px; cursor: pointer; padding: 0; text-align: left; }
 
-  #messages { flex: 1; overflow-y: auto; padding: 16px; }
+  #messages { flex: 1; overflow-y: auto; padding: 16px; background-size: cover; background-position: center; }
   .empty-state { text-align: center; color: var(--text-dim); font-size: 14px; margin-top: 60px; }
   .msg-row { display: flex; margin-bottom: 10px; animation: riseIn 0.25s ease-out; }
   .msg-row.self { flex-direction: column; align-items: flex-end; }
@@ -156,10 +160,18 @@
       </button>
     </div>
     <div id="theme-panel" class="theme-panel hidden">
-      <button class="swatch swatch-midnight" data-theme="midnight" aria-label="Полночь"></button>
-      <button class="swatch swatch-forest" data-theme="forest" aria-label="Лес"></button>
-      <button class="swatch swatch-plum" data-theme="plum" aria-label="Слива"></button>
-      <button class="swatch swatch-light" data-theme="light" aria-label="Свет"></button>
+      <span class="theme-panel-label">Тема</span>
+      <div class="swatch-row">
+        <button class="swatch swatch-midnight" data-theme="midnight" aria-label="Полночь"></button>
+        <button class="swatch swatch-forest" data-theme="forest" aria-label="Лес"></button>
+        <button class="swatch swatch-plum" data-theme="plum" aria-label="Слива"></button>
+        <button class="swatch swatch-light" data-theme="light" aria-label="Свет"></button>
+      </div>
+      <hr class="theme-panel-divider" />
+      <span class="theme-panel-label">Фон чата</span>
+      <button type="button" id="wallpaper-pick-btn" class="link-btn">Выбрать фото…</button>
+      <button type="button" id="wallpaper-reset-btn" class="link-btn" style="display:none;">Сбросить фон</button>
+      <input type="file" id="wallpaper-input" accept="image/*" style="display:none;" />
     </div>
   </header>
 
@@ -279,6 +291,45 @@ function loadSavedTheme() {
   try { return localStorage.getItem(THEME_KEY) || "midnight"; } catch { return "midnight"; }
 }
 
+// --- wallpaper ---
+const WALLPAPER_KEY = "whisper:wallpaper";
+function applyWallpaper(dataUrl) {
+  if (dataUrl) {
+    messagesEl.style.backgroundImage = `url(${dataUrl})`;
+    wallpaperResetBtn.style.display = "block";
+  } else {
+    messagesEl.style.backgroundImage = "";
+    wallpaperResetBtn.style.display = "none";
+  }
+}
+function loadSavedWallpaper() {
+  try { return localStorage.getItem(WALLPAPER_KEY); } catch { return null; }
+}
+function resizeImageToDataUrl(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) { height = Math.round((height * maxDim) / width); width = maxDim; }
+          else { width = Math.round((width * maxDim) / height); height = maxDim; }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = () => reject(new Error("Не получилось прочитать изображение"));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error("Не получилось прочитать файл"));
+    reader.readAsDataURL(file);
+  });
+}
+
 // --- state ---
 let cryptoKey = null;
 let passphraseValue = "";
@@ -299,6 +350,9 @@ const whoName = document.getElementById("who-name");
 const leaveBtn = document.getElementById("leave-btn");
 const themeBtn = document.getElementById("theme-btn");
 const themePanel = document.getElementById("theme-panel");
+const wallpaperPickBtn = document.getElementById("wallpaper-pick-btn");
+const wallpaperResetBtn = document.getElementById("wallpaper-reset-btn");
+const wallpaperInput = document.getElementById("wallpaper-input");
 const messagesEl = document.getElementById("messages");
 const chatError = document.getElementById("chat-error");
 const draftInput = document.getElementById("draft");
@@ -444,6 +498,28 @@ themeBtn.addEventListener("click", () => themePanel.classList.toggle("hidden"));
 document.querySelectorAll(".swatch").forEach((btn) => {
   btn.addEventListener("click", () => { applyTheme(btn.dataset.theme); themePanel.classList.add("hidden"); });
 });
+wallpaperPickBtn.addEventListener("click", () => wallpaperInput.click());
+wallpaperInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const dataUrl = await resizeImageToDataUrl(file, 1080, 0.8);
+    try {
+      localStorage.setItem(WALLPAPER_KEY, dataUrl);
+    } catch {
+      showChatError("Фото слишком большое для сохранения на устройстве — попробуй другое.");
+      return;
+    }
+    applyWallpaper(dataUrl);
+    themePanel.classList.add("hidden");
+  } catch {
+    showChatError("Не получилось применить фото как фон.");
+  }
+});
+wallpaperResetBtn.addEventListener("click", () => {
+  try { localStorage.removeItem(WALLPAPER_KEY); } catch {}
+  applyWallpaper(null);
+});
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -453,6 +529,7 @@ if ("serviceWorker" in navigator) {
 
 // --- init ---
 applyTheme(loadSavedTheme());
+applyWallpaper(loadSavedWallpaper());
 const savedLogin = loadSavedLogin();
 if (savedLogin && savedLogin.name && savedLogin.passphrase) {
   nameInput.value = savedLogin.name;
