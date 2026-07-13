@@ -114,8 +114,8 @@
   .bubble a { color: inherit; text-decoration: underline; }
   .reply-quote { border-left: 3px solid currentColor; opacity: 0.75; padding: 3px 0 3px 8px; margin-bottom: 5px; font-size: 12.5px; line-height: 1.3; cursor: pointer; }
   .reply-quote .rq-sender { font-weight: 600; display: block; }
-  @keyframes flashPulse { 0% { filter: brightness(1.6); } 100% { filter: brightness(1); } }
-  .msg-flash { animation: flashPulse 0.9s ease; }
+  @keyframes flashPulse { 0% { box-shadow: 0 0 0 3px var(--lock); } 70% { box-shadow: 0 0 0 3px var(--lock); } 100% { box-shadow: 0 0 0 3px transparent; } }
+  .msg-flash { animation: flashPulse 1.1s ease; }
   .edited-tag { font-size: 10.5px; opacity: 0.65; margin-left: 6px; }
 
   #chat-error { color: var(--error); font-size: 12.5px; padding: 0 16px 6px; text-align: center; }
@@ -990,15 +990,35 @@ async function handleFilesSelected(fileList) {
   if (files.length === 0 || !cryptoKey) return;
   showChatError("");
   attachBtn.disabled = true;
-  if (files.length === 1) {
-    await uploadOneFile(files[0]);
-  } else {
-    await uploadFileGroup(files);
+  try {
+    if (files.length === 1) {
+      await uploadOneFile(files[0]);
+    } else {
+      await uploadFileGroup(files);
+    }
+  } catch (err) {
+    showChatError(`Не получилось отправить файлы: ${err?.message || "неизвестная ошибка"}.`);
+  } finally {
+    attachBtn.disabled = false;
+    fileInputMedia.value = "";
+    fileInputDoc.value = "";
+    clearComposeContext();
   }
-  attachBtn.disabled = false;
-  fileInputMedia.value = "";
-  fileInputDoc.value = "";
-  clearComposeContext();
+}
+
+async function fetchWithRetry(url, attempts = 3, delayMs = 900) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const resp = await fetch(url, { cache: "no-store" });
+      if (resp.ok) return resp;
+      lastErr = new Error(`HTTP ${resp.status}`);
+    } catch (err) {
+      lastErr = err;
+    }
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  throw lastErr || new Error("fetch failed");
 }
 
 async function openFile(id) {
@@ -1008,8 +1028,7 @@ async function openFile(id) {
   m.loadError = false;
   renderMessages();
   try {
-    const resp = await fetch(m.url);
-    if (!resp.ok) throw new Error("fetch failed");
+    const resp = await fetchWithRetry(m.url);
     const encBuf = await resp.arrayBuffer();
     const plainBuf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64(m.fileIv) }, cryptoKey, encBuf);
     const blob = new Blob([plainBuf], { type: m.mime || "application/octet-stream" });
@@ -1053,8 +1072,7 @@ async function openGroupFile(msgId, idx) {
   f.loadError = false;
   renderMessages();
   try {
-    const resp = await fetch(f.url);
-    if (!resp.ok) throw new Error("fetch failed");
+    const resp = await fetchWithRetry(f.url);
     const encBuf = await resp.arrayBuffer();
     const plainBuf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64(f.fileIv) }, cryptoKey, encBuf);
     const blob = new Blob([plainBuf], { type: f.mime || "application/octet-stream" });
