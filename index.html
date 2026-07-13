@@ -951,9 +951,10 @@ async function uploadOneFile(file) {
 async function uploadFileGroup(files) {
   const room = await hashRoom(passphraseValue);
   const fileEntries = [];
+  const errors = [];
   for (const file of files) {
     if (file.size > MAX_FILE_MB * 1024 * 1024) {
-      showChatError(`«${file.name}» больше ${MAX_FILE_MB} МБ — пропускаю этот файл.`);
+      errors.push(`«${file.name}» больше ${MAX_FILE_MB} МБ`);
       continue;
     }
     try {
@@ -965,10 +966,11 @@ async function uploadFileGroup(files) {
       const metaJson = JSON.stringify({ name: file.name, mime: file.type || "application/octet-stream" });
       const { iv: metaIv, ct: metaCt } = await encryptText(cryptoKey, metaJson);
       fileEntries.push({ metaIv, metaCt, fileIv: toB64(fileIvArr), url, path, size: file.size });
-    } catch {
-      showChatError(`Не получилось загрузить «${file.name}».`);
+    } catch (err) {
+      errors.push(`«${file.name}»: ${err?.message || err?.error || "неизвестная ошибка"}`);
     }
   }
+  if (errors.length > 0) showChatError(errors.join(" · "));
   if (fileEntries.length === 0) return;
   try {
     const entry = { sender: nameInput.value.trim(), ts: Date.now(), type: "file-group", files: fileEntries };
@@ -1090,13 +1092,23 @@ async function openGroupFile(msgId, idx) {
 function scrollToMessage(id) {
   const row = messagesEl.querySelector(`.msg-row[data-id="${id}"]`);
   if (!row) return;
-  row.scrollIntoView({ behavior: "smooth", block: "center" });
   const bubble = row.querySelector(".bubble");
-  if (bubble) {
+  const flash = () => {
+    if (!bubble) return;
     bubble.classList.remove("msg-flash");
     void bubble.offsetWidth;
     bubble.classList.add("msg-flash");
-  }
+  };
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    messagesEl.removeEventListener("scrollend", finish);
+    flash();
+  };
+  messagesEl.addEventListener("scrollend", finish);
+  row.scrollIntoView({ behavior: "smooth", block: "center" });
+  setTimeout(finish, 900); // fallback for browsers without the scrollend event
 }
 
 messagesEl.addEventListener("click", (e) => {
