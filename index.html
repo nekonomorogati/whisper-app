@@ -112,8 +112,10 @@
   .bubble.self { border-radius: 14px 14px 3px 14px; background: var(--accent); color: var(--accent-text); }
   .bubble.other { border-radius: 14px 14px 14px 3px; background: var(--surface); color: var(--text); }
   .bubble a { color: inherit; text-decoration: underline; }
-  .reply-quote { border-left: 3px solid currentColor; opacity: 0.75; padding: 3px 0 3px 8px; margin-bottom: 5px; font-size: 12.5px; line-height: 1.3; }
+  .reply-quote { border-left: 3px solid currentColor; opacity: 0.75; padding: 3px 0 3px 8px; margin-bottom: 5px; font-size: 12.5px; line-height: 1.3; cursor: pointer; }
   .reply-quote .rq-sender { font-weight: 600; display: block; }
+  @keyframes flashPulse { 0% { filter: brightness(1.6); } 100% { filter: brightness(1); } }
+  .msg-flash { animation: flashPulse 0.9s ease; }
   .edited-tag { font-size: 10.5px; opacity: 0.65; margin-left: 6px; }
 
   #chat-error { color: var(--error); font-size: 12.5px; padding: 0 16px 6px; text-align: center; }
@@ -130,6 +132,10 @@
   .file-meta { font-size: 11.5px; opacity: 0.75; }
   .file-image { max-width: 220px; max-height: 280px; border-radius: 10px; display: block; cursor: pointer; }
   .file-video { max-width: 240px; border-radius: 10px; display: block; }
+  .file-group-media { display: flex; flex-wrap: wrap; gap: 4px; max-width: 260px; }
+  .group-thumb { width: 84px; height: 84px; object-fit: cover; border-radius: 8px; cursor: pointer; background: rgba(0,0,0,0.15); }
+  .group-thumb-pending { display: flex; align-items: center; justify-content: center; font-size: 20px; }
+  .file-group-docs { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
   .file-download-link { color: inherit; text-decoration: underline; font-size: 13px; display: inline-block; margin-top: 4px; }
   #attach-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; flex-shrink: 0; }
   #attach-btn:disabled { opacity: 0.5; }
@@ -138,7 +144,7 @@
   .attach-menu button { background: none; border: none; color: var(--text); font-size: 14px; padding: 10px 12px; text-align: left; cursor: pointer; border-radius: 6px; }
 
   .composer { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); flex-shrink: 0; }
-  #draft { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 10px 16px; color: var(--text); font-size: 14.5px; outline: none; }
+  #draft { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 10px 16px; color: var(--text); font-size: 14.5px; outline: none; font-family: 'Inter', sans-serif; resize: none; max-height: 140px; overflow-y: auto; line-height: 1.4; }
   #send-btn { width: 42px; height: 42px; border-radius: 50%; border: none; background: var(--surface); color: var(--text-dim); display: flex; align-items: center; justify-content: center; cursor: default; flex-shrink: 0; }
   #send-btn.active { background: var(--accent); color: var(--accent-text); cursor: pointer; }
 
@@ -236,7 +242,7 @@
     </div>
     <input type="file" id="file-input-media" style="display:none" accept="image/*,video/*" multiple />
     <input type="file" id="file-input-doc" style="display:none" accept=".pdf,.doc,.docx,.zip,.fb2" multiple />
-    <input id="draft" placeholder="Сообщение…" autocomplete="off" />
+    <textarea id="draft" placeholder="Сообщение…" rows="1"></textarea>
     <button id="send-btn" aria-label="Отправить">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
     </button>
@@ -598,7 +604,7 @@ function renderMessages() {
   messagesEl.innerHTML = list.map((m, idx) => {
     const editedTag = m.edited ? `<span class="edited-tag">изменено</span>` : "";
     const replyHtml = m.replyToId ? `
-      <div class="reply-quote">
+      <div class="reply-quote" data-reply-target="${m.replyToId}">
         <span class="rq-sender">${escapeHtml(m.replyToSender || "")}</span>
         <span>${escapeHtml(truncate(m.replyToText || "", 80))}</span>
       </div>` : "";
@@ -608,7 +614,9 @@ function renderMessages() {
     const timeHtml = `<span class="msg-time">${formatTime(m.ts)}</span>`;
 
     let bodyHtml;
-    if (m.type === "file") {
+    if (m.type === "file-group") {
+      bodyHtml = renderFileGroupBody(m) + timeHtml;
+    } else if (m.type === "file") {
       bodyHtml = renderFileBody(m) + timeHtml;
     } else {
       bodyHtml = `<span>${linkify(escapeHtml(m.text))}</span>${editedTag}${timeHtml}`;
@@ -650,12 +658,74 @@ function renderFileBody(m) {
   return `<div class="file-card" data-id="${m.id}"><div class="file-icon">${fileEmoji(m.mime, m.name)}</div><div class="file-info"><div class="file-name">${escapeHtml(m.name || "файл")}</div><div class="file-meta">${formatSize(m.size)} · ${m.loading ? "Загрузка…" : "Нажми, чтобы открыть"}</div></div></div>`;
 }
 
+function pluralFiles(n) {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return "файл";
+  if ([2, 3, 4].includes(mod10) && ![12, 13, 14].includes(mod100)) return "файла";
+  return "файлов";
+}
+
+function renderFileGroupBody(m) {
+  const media = [];
+  const docs = [];
+  m.files.forEach((f, idx) => {
+    const isMedia = (f.mime || "").startsWith("image/") || (f.mime || "").startsWith("video/");
+    (isMedia ? media : docs).push({ f, idx });
+  });
+
+  const mediaHtml = media.map(({ f, idx }) => {
+    if (f.loadError) {
+      return `<div class="group-thumb group-thumb-pending" data-gid="${m.id}" data-gidx="${idx}">⚠</div>`;
+    }
+    if (f.blobUrl) {
+      if ((f.mime || "").startsWith("image/")) {
+        return `<img class="group-thumb" data-gid="${m.id}" data-gidx="${idx}" src="${f.blobUrl}" alt="${escapeHtml(f.name || "")}" />`;
+      }
+      return `<video class="group-thumb" data-gid="${m.id}" data-gidx="${idx}" src="${f.blobUrl}" controls></video>`;
+    }
+    return `<div class="group-thumb group-thumb-pending" data-gid="${m.id}" data-gidx="${idx}">${f.loading ? "…" : "🖼"}</div>`;
+  }).join("");
+
+  const docsHtml = docs.map(({ f, idx }) => {
+    if (f.blobUrl) {
+      return `<div class="file-card"><div class="file-icon">${fileEmoji(f.mime, f.name)}</div><div class="file-info"><div class="file-name">${escapeHtml(f.name)}</div><div class="file-meta">${formatSize(f.size)}</div></div></div><a class="file-download-link" href="${f.blobUrl}" download="${escapeHtml(f.name || "file")}">⬇ Скачать ещё раз</a>`;
+    }
+    return `<div class="file-card group-item" data-gid="${m.id}" data-gidx="${idx}"><div class="file-icon">${f.loadError ? "⚠" : fileEmoji(f.mime, f.name)}</div><div class="file-info"><div class="file-name">${escapeHtml(f.name || "файл")}</div><div class="file-meta">${formatSize(f.size)} · ${f.loading ? "Загрузка…" : (f.loadError ? "Не открылось — нажми ещё раз" : "Нажми, чтобы открыть")}</div></div></div>`;
+  }).join("");
+
+  return `${media.length ? `<div class="file-group-media">${mediaHtml}</div>` : ""}${docs.length ? `<div class="file-group-docs">${docsHtml}</div>` : ""}`;
+}
+
 async function handleSnapshot(raw) {
   if (!cryptoKey) return;
   const rawIds = new Set(raw.map((m) => m.id));
 
   for (const m of raw) {
     if (!decryptedCache.has(m.id)) {
+      if (m.type === "file-group") {
+        const decFiles = [];
+        for (const f of (m.files || [])) {
+          try {
+            const metaJson = await decryptText(cryptoKey, f.metaIv, f.metaCt);
+            const meta = JSON.parse(metaJson);
+            decFiles.push({ name: meta.name, mime: meta.mime, size: f.size, url: f.url, path: f.path, fileIv: f.fileIv, blobUrl: null, loading: false, loadError: false });
+          } catch {
+            decFiles.push({ name: "не удалось расшифровать", mime: "", size: f.size, url: f.url, path: f.path, fileIv: f.fileIv, blobUrl: null, loading: false, loadError: true });
+          }
+        }
+        let replyToText = null, replyToSender = null, replyToId = null;
+        if (m.replyTo) {
+          replyToId = m.replyTo.id;
+          replyToSender = m.replyTo.sender;
+          try { replyToText = await decryptText(cryptoKey, m.replyTo.iv, m.replyTo.ct); }
+          catch { replyToText = "⚠"; }
+        }
+        decryptedCache.set(m.id, { type: "file-group", sender: m.sender, ts: m.ts, files: decFiles, replyToId, replyToSender, replyToText });
+        decFiles.forEach((f, idx) => {
+          if ((f.mime || "").startsWith("image/")) openGroupFile(m.id, idx); // fire-and-forget thumbnail preview
+        });
+        continue;
+      }
       if (m.type === "file") {
         try {
           const metaJson = await decryptText(cryptoKey, m.metaIv, m.metaCt);
@@ -788,7 +858,10 @@ function startReply(id) {
   const m = decryptedCache.get(id);
   if (!m) return;
   editingId = null;
-  const previewText = m.type === "file" ? `📎 ${m.name || "файл"}` : m.text;
+  let previewText;
+  if (m.type === "file-group") previewText = `📎 ${m.files.length} ${pluralFiles(m.files.length)}`;
+  else if (m.type === "file") previewText = `📎 ${m.name || "файл"}`;
+  else previewText = m.text;
   replyContext = { id, sender: m.sender, text: previewText };
   composeBanner.classList.remove("hidden");
   composeBannerText.innerHTML = `Ответ <b>${escapeHtml(m.sender)}</b>: ${escapeHtml(truncate(previewText, 50))}`;
@@ -804,6 +877,7 @@ function startEdit(id) {
   composeBannerText.innerHTML = `Редактирование сообщения`;
   draftInput.value = m.text;
   updateSendBtnState();
+  autoResizeDraft();
   draftInput.focus();
 }
 
@@ -812,6 +886,7 @@ async function handleSend() {
   if (!text || !cryptoKey) return;
   draftInput.value = "";
   updateSendBtnState();
+  autoResizeDraft();
   const room = await hashRoom(passphraseValue);
 
   try {
@@ -873,13 +948,50 @@ async function uploadOneFile(file) {
   }
 }
 
+async function uploadFileGroup(files) {
+  const room = await hashRoom(passphraseValue);
+  const fileEntries = [];
+  for (const file of files) {
+    if (file.size > MAX_FILE_MB * 1024 * 1024) {
+      showChatError(`«${file.name}» больше ${MAX_FILE_MB} МБ — пропускаю этот файл.`);
+      continue;
+    }
+    try {
+      const fileBuf = await file.arrayBuffer();
+      const fileIvArr = crypto.getRandomValues(new Uint8Array(12));
+      const encBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv: fileIvArr }, cryptoKey, fileBuf);
+      const path = `${room}/${crypto.randomUUID()}`;
+      const url = await uploadEncryptedFile(path, encBuf);
+      const metaJson = JSON.stringify({ name: file.name, mime: file.type || "application/octet-stream" });
+      const { iv: metaIv, ct: metaCt } = await encryptText(cryptoKey, metaJson);
+      fileEntries.push({ metaIv, metaCt, fileIv: toB64(fileIvArr), url, path, size: file.size });
+    } catch {
+      showChatError(`Не получилось загрузить «${file.name}».`);
+    }
+  }
+  if (fileEntries.length === 0) return;
+  try {
+    const entry = { sender: nameInput.value.trim(), ts: Date.now(), type: "file-group", files: fileEntries };
+    if (replyContext) {
+      const rc = await encryptText(cryptoKey, truncate(replyContext.text, 200));
+      entry.replyTo = { id: replyContext.id, sender: replyContext.sender, iv: rc.iv, ct: rc.ct };
+    }
+    const id = await sendMessage(room, entry);
+    ownIds.add(id);
+  } catch {
+    showChatError("Не получилось отправить альбом файлов.");
+  }
+}
+
 async function handleFilesSelected(fileList) {
   const files = Array.from(fileList || []);
   if (files.length === 0 || !cryptoKey) return;
   showChatError("");
   attachBtn.disabled = true;
-  for (const file of files) {
-    await uploadOneFile(file);
+  if (files.length === 1) {
+    await uploadOneFile(files[0]);
+  } else {
+    await uploadFileGroup(files);
   }
   attachBtn.disabled = false;
   fileInputMedia.value = "";
@@ -930,7 +1042,76 @@ async function openFile(id) {
   }
 }
 
+async function openGroupFile(msgId, idx) {
+  const m = decryptedCache.get(msgId);
+  if (!m || m.type !== "file-group") return;
+  const f = m.files[idx];
+  if (!f || f.blobUrl || f.loading) return;
+  f.loading = true;
+  f.loadError = false;
+  renderMessages();
+  try {
+    const resp = await fetch(f.url);
+    if (!resp.ok) throw new Error("fetch failed");
+    const encBuf = await resp.arrayBuffer();
+    const plainBuf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64(f.fileIv) }, cryptoKey, encBuf);
+    const blob = new Blob([plainBuf], { type: f.mime || "application/octet-stream" });
+    f.blobUrl = URL.createObjectURL(blob);
+    f.loading = false;
+    renderMessages();
+    if (!(f.mime || "").startsWith("image/") && !(f.mime || "").startsWith("video/")) {
+      const fileForShare = new File([blob], f.name || "file", { type: f.mime || "application/octet-stream" });
+      let shared = false;
+      if (navigator.canShare && navigator.canShare({ files: [fileForShare] })) {
+        try {
+          await navigator.share({ files: [fileForShare], title: f.name || "file" });
+          shared = true;
+        } catch {
+          shared = false;
+        }
+      }
+      if (!shared) {
+        const a = document.createElement("a");
+        a.href = f.blobUrl;
+        a.download = f.name || "file";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+    }
+  } catch {
+    f.loading = false;
+    f.loadError = true;
+    renderMessages();
+    showChatError("Не получилось открыть файл.");
+  }
+}
+
+function scrollToMessage(id) {
+  const row = messagesEl.querySelector(`.msg-row[data-id="${id}"]`);
+  if (!row) return;
+  row.scrollIntoView({ behavior: "smooth", block: "center" });
+  const bubble = row.querySelector(".bubble");
+  if (bubble) {
+    bubble.classList.remove("msg-flash");
+    void bubble.offsetWidth;
+    bubble.classList.add("msg-flash");
+  }
+}
+
 messagesEl.addEventListener("click", (e) => {
+  const quote = e.target.closest(".reply-quote[data-reply-target]");
+  if (quote) { scrollToMessage(quote.dataset.replyTarget); return; }
+  const groupEl = e.target.closest("[data-gid][data-gidx]");
+  if (groupEl) {
+    const gid = groupEl.dataset.gid;
+    const gidx = Number(groupEl.dataset.gidx);
+    const m = decryptedCache.get(gid);
+    const f = m && m.files && m.files[gidx];
+    if (f && f.blobUrl && (f.mime || "").startsWith("image/")) { window.open(f.blobUrl, "_blank"); return; }
+    openGroupFile(gid, gidx);
+    return;
+  }
   const card = e.target.closest(".file-card[data-id]");
   if (card) { openFile(card.dataset.id); return; }
   const img = e.target.closest(".file-image[data-id]");
@@ -966,7 +1147,7 @@ messagesEl.addEventListener("pointermove", (e) => {
 function openActionSheet(id, isSelf) {
   activeSheetId = id;
   const m = decryptedCache.get(id);
-  const isFile = !!(m && m.type === "file");
+  const isFile = !!(m && (m.type === "file" || m.type === "file-group"));
   actionCopy.style.display = isFile ? "none" : "block";
   actionEdit.style.display = (isSelf && !isFile) ? "block" : "none";
   actionDelete.style.display = isSelf ? "block" : "none";
@@ -1006,6 +1187,8 @@ actionDelete.addEventListener("click", async () => {
     const room = await hashRoom(passphraseValue);
     if (m && m.type === "file" && m.path) {
       await deleteStoredFile(m.path);
+    } else if (m && m.type === "file-group" && Array.isArray(m.files)) {
+      for (const f of m.files) { if (f.path) await deleteStoredFile(f.path); }
     }
     await deleteMessage(room, id);
   } catch {
@@ -1031,7 +1214,17 @@ joinBtn.addEventListener("click", handleJoin);
 passInput.addEventListener("keydown", (e) => { if (e.key === "Enter") handleJoin(); });
 leaveBtn.addEventListener("click", handleLeave);
 sendBtn.addEventListener("click", handleSend);
-draftInput.addEventListener("keydown", (e) => { if (e.key === "Enter") handleSend(); });
+draftInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    handleSend();
+  }
+});
+function autoResizeDraft() {
+  draftInput.style.height = "auto";
+  draftInput.style.height = Math.min(draftInput.scrollHeight, 140) + "px";
+}
+draftInput.addEventListener("input", autoResizeDraft);
 draftInput.addEventListener("input", updateSendBtnState);
 composeBannerCancel.addEventListener("click", clearComposeContext);
 forgetBtn.addEventListener("click", () => {
