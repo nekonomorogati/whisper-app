@@ -100,7 +100,21 @@
   .msg-time { font-size: 10.5px; opacity: 0.6; margin-left: 7px; white-space: nowrap; }
   .msg-caption { font-size: 14.5px; line-height: 1.4; margin-top: 6px; word-break: break-word; }
 
+  .messages-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
   #messages { flex: 1; overflow-y: auto; padding: 16px; background-size: cover; background-position: center; }
+  .scroll-bottom-btn { position: absolute; right: 16px; bottom: 16px; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 20px; line-height: 1; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25); z-index: 5; }
+
+  .select-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .select-bar button { background: none; border: none; color: var(--text); font-size: 14px; cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 0; }
+  #select-delete-btn { color: var(--error); }
+  #select-delete-btn:disabled { opacity: 0.4; cursor: default; }
+  #select-count { font-size: 13px; color: var(--text-muted); }
+
+  .msg-row.select-dim { opacity: 0.45; }
+  .msg-row.select-mode .bubble { cursor: pointer; }
+  .select-check { position: absolute; top: -8px; left: -8px; width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--accent); background: var(--surface); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; z-index: 2; }
+  .select-check.checked { background: var(--accent); }
+  .select-check.checked::after { content: "✓"; color: var(--accent-text); font-weight: 700; }
   .empty-state { text-align: center; color: var(--text-dim); font-size: 14px; margin-top: 60px; }
   .msg-row { display: flex; margin-bottom: 10px; animation: riseIn 0.25s ease-out; user-select: none; -webkit-user-select: none; }
   .msg-row.self { flex-direction: column; align-items: flex-end; }
@@ -109,7 +123,7 @@
   .msg-row.self .msg-content { align-items: flex-end; max-width: 78%; }
   .avatar { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: #fff; flex-shrink: 0; }
   .msg-sender { font-size: 11px; color: var(--text-muted); margin-bottom: 3px; margin-left: 4px; }
-  .bubble { max-width: 100%; padding: 9px 13px; font-size: 14.5px; line-height: 1.4; word-break: break-word; }
+  .bubble { position: relative; max-width: 100%; padding: 9px 13px; font-size: 14.5px; line-height: 1.4; word-break: break-word; }
   .bubble.self { border-radius: 14px 14px 3px 14px; background: var(--accent); color: var(--accent-text); }
   .bubble.other { border-radius: 14px 14px 14px 3px; background: var(--surface); color: var(--text); }
   .bubble a { color: inherit; text-decoration: underline; }
@@ -229,9 +243,17 @@
       <input type="file" id="wallpaper-input" accept="image/*" style="display:none;" />
     </div>
   </header>
+  <div id="select-bar" class="select-bar hidden">
+    <button type="button" id="select-cancel-btn" aria-label="Отмена">✕</button>
+    <span id="select-count">Выбрано: 0</span>
+    <button type="button" id="select-delete-btn" aria-label="Удалить выбранные">🗑 Удалить</button>
+  </div>
   <div id="presence-bar" class="presence-bar hidden"></div>
 
-  <div id="messages"></div>
+  <div class="messages-wrap">
+    <div id="messages"></div>
+    <button type="button" id="scroll-bottom-btn" class="scroll-bottom-btn hidden" aria-label="К новым сообщениям">⌄</button>
+  </div>
   <div id="chat-error" style="display:none;"></div>
 
   <div id="compose-banner" class="compose-banner hidden">
@@ -263,6 +285,7 @@
   <button type="button" id="action-reply">Ответить</button>
   <button type="button" id="action-copy">Копировать текст</button>
   <button type="button" id="action-edit">Изменить</button>
+  <button type="button" id="action-select">Выбрать несколько</button>
   <hr />
   <button type="button" id="action-delete" class="danger">Удалить</button>
   <hr />
@@ -491,6 +514,8 @@ const ownIds = new Set();
 let replyContext = null;   // { id, sender, text }
 let editingId = null;      // id of message currently being edited
 let activeSheetId = null;  // message id the action sheet refers to
+let selectMode = false;
+let selectedIds = new Set();
 
 // --- DOM refs ---
 const joinScreen = document.getElementById("join-screen");
@@ -529,6 +554,12 @@ const actionCopy = document.getElementById("action-copy");
 const actionEdit = document.getElementById("action-edit");
 const actionDelete = document.getElementById("action-delete");
 const actionCancel = document.getElementById("action-cancel");
+const actionSelect = document.getElementById("action-select");
+const selectBar = document.getElementById("select-bar");
+const selectCancelBtn = document.getElementById("select-cancel-btn");
+const selectDeleteBtn = document.getElementById("select-delete-btn");
+const selectCount = document.getElementById("select-count");
+const scrollBottomBtn = document.getElementById("scroll-bottom-btn");
 const lightbox = document.getElementById("lightbox");
 const lightboxImg = document.getElementById("lightbox-img");
 const lightboxClose = document.getElementById("lightbox-close");
@@ -621,6 +652,9 @@ function renderMessages() {
     .map(([id, m]) => ({ id, ...m, self: m.sender === myName }))
     .sort((a, b) => a.ts - b.ts);
 
+  const distanceFromBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+  const wasNearBottom = messagesEl.scrollHeight === 0 || distanceFromBottom < 80;
+
   if (list.length === 0) {
     messagesEl.innerHTML = `<div class="empty-state">Пока тихо. Напишите первое сообщение —<br/>остальные увидят его мгновенно.</div>`;
     return;
@@ -650,15 +684,17 @@ function renderMessages() {
     }
 
     if (m.self) {
+      const checked = selectMode && selectedIds.has(m.id);
+      const checkHtml = selectMode ? `<span class="select-check ${checked ? "checked" : ""}"></span>` : "";
       return `${dividerHtml}
-        <div class="msg-row self" data-id="${m.id}" data-self="true">
+        <div class="msg-row self${selectMode ? " select-mode" : ""}" data-id="${m.id}" data-self="true">
           <div class="msg-content">
-            <div class="bubble self">${replyHtml}${bodyHtml}</div>
+            <div class="bubble self">${checkHtml}${replyHtml}${bodyHtml}</div>
           </div>
         </div>`;
     }
     return `${dividerHtml}
-      <div class="msg-row other" data-id="${m.id}" data-self="false">
+      <div class="msg-row other${selectMode ? " select-dim" : ""}" data-id="${m.id}" data-self="false">
         <div class="avatar" style="background:${avatarColor(m.sender)}">${escapeHtml(initials(m.sender))}</div>
         <div class="msg-content">
           <span class="msg-sender">${escapeHtml(m.sender)}</span>
@@ -666,7 +702,13 @@ function renderMessages() {
         </div>
       </div>`;
   }).join("");
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  if (wasNearBottom) {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  } else {
+    messagesEl.scrollTop = Math.max(0, messagesEl.scrollHeight - messagesEl.clientHeight - distanceFromBottom);
+  }
+  updateScrollToBottomBtn();
 }
 
 function renderFileBody(m) {
@@ -690,6 +732,12 @@ function pluralFiles(n) {
   if (mod10 === 1 && mod100 !== 11) return "файл";
   if ([2, 3, 4].includes(mod10) && ![12, 13, 14].includes(mod100)) return "файла";
   return "файлов";
+}
+function pluralMessages(n) {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return "сообщение";
+  if ([2, 3, 4].includes(mod10) && ![12, 13, 14].includes(mod100)) return "сообщения";
+  return "сообщений";
 }
 
 function renderFileGroupBody(m) {
@@ -891,6 +939,9 @@ async function handleLeave() {
   themePanel.classList.add("hidden");
   presenceBar.classList.add("hidden");
   presenceBar.innerHTML = "";
+  selectMode = false;
+  selectedIds = new Set();
+  selectBar.classList.add("hidden");
   clearComposeContext();
   chatScreen.classList.add("hidden");
   joinScreen.classList.remove("hidden");
@@ -1272,6 +1323,63 @@ lightboxImg.addEventListener("touchend", (e) => {
   lightboxTouchStartX = null;
 });
 
+function updateScrollToBottomBtn() {
+  const distanceFromBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+  scrollBottomBtn.classList.toggle("hidden", distanceFromBottom < 80);
+}
+messagesEl.addEventListener("scroll", updateScrollToBottomBtn);
+scrollBottomBtn.addEventListener("click", () => {
+  messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: "smooth" });
+});
+
+function updateSelectBar() {
+  selectBar.classList.toggle("hidden", !selectMode);
+  selectCount.textContent = `Выбрано: ${selectedIds.size}`;
+  selectDeleteBtn.disabled = selectedIds.size === 0;
+}
+function enterSelectMode(initialId) {
+  selectMode = true;
+  selectedIds = new Set([initialId]);
+  renderMessages();
+  updateSelectBar();
+}
+function exitSelectMode() {
+  selectMode = false;
+  selectedIds = new Set();
+  renderMessages();
+  updateSelectBar();
+}
+function toggleSelect(id) {
+  if (selectedIds.has(id)) selectedIds.delete(id);
+  else selectedIds.add(id);
+  renderMessages();
+  updateSelectBar();
+}
+selectCancelBtn.addEventListener("click", exitSelectMode);
+selectDeleteBtn.addEventListener("click", async () => {
+  if (selectedIds.size === 0) return;
+  const count = selectedIds.size;
+  if (!window.confirm(`Удалить ${count} ${pluralMessages(count)} у всех участников комнаты?`)) return;
+  try {
+    const room = await hashRoom(passphraseValue);
+    for (const id of Array.from(selectedIds)) {
+      const m = decryptedCache.get(id);
+      try {
+        if (m && m.type === "file" && m.path) {
+          await deleteStoredFile(m.path);
+        } else if (m && m.type === "file-group" && Array.isArray(m.files)) {
+          for (const f of m.files) { if (f.path) await deleteStoredFile(f.path); }
+        }
+        await deleteMessage(room, id);
+      } catch {}
+    }
+  } catch {
+    showChatError("Не получилось удалить некоторые сообщения.");
+  } finally {
+    exitSelectMode();
+  }
+});
+
 function scrollToMessage(id) {
   const row = messagesEl.querySelector(`.msg-row[data-id="${id}"]`);
   if (!row) return;
@@ -1295,6 +1403,11 @@ function scrollToMessage(id) {
 }
 
 messagesEl.addEventListener("click", (e) => {
+  if (selectMode) {
+    const row = findRow(e.target);
+    if (row && row.dataset.self === "true") toggleSelect(row.dataset.id);
+    return;
+  }
   const quote = e.target.closest(".reply-quote[data-reply-target]");
   if (quote) { scrollToMessage(quote.dataset.replyTarget); return; }
   const groupEl = e.target.closest("[data-gid][data-gidx]");
@@ -1327,6 +1440,7 @@ function findRow(target) {
 }
 
 messagesEl.addEventListener("pointerdown", (e) => {
+  if (selectMode) return;
   const row = findRow(e.target);
   if (!row) return;
   pressStartXY = { x: e.clientX, y: e.clientY };
@@ -1357,6 +1471,7 @@ function openActionSheet(id, isSelf) {
   actionCopy.style.display = isFile ? "none" : "block";
   actionEdit.style.display = isSelf ? "block" : "none";
   actionDelete.style.display = isSelf ? "block" : "none";
+  actionSelect.style.display = isSelf ? "block" : "none";
   sheetBackdrop.classList.remove("hidden");
   actionSheet.classList.remove("hidden");
 }
@@ -1382,6 +1497,11 @@ actionCopy.addEventListener("click", async () => {
 actionEdit.addEventListener("click", () => {
   if (activeSheetId) startEdit(activeSheetId);
   closeActionSheet();
+});
+actionSelect.addEventListener("click", () => {
+  const id = activeSheetId;
+  closeActionSheet();
+  if (id) enterSelectMode(id);
 });
 actionDelete.addEventListener("click", async () => {
   const id = activeSheetId;
