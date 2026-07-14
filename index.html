@@ -170,8 +170,8 @@
   .action-sheet button.danger { color: var(--error); }
   .action-sheet hr { border: none; height: 1px; background: var(--border); margin: 4px 0; }
 
-  .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 40; display: flex; align-items: center; justify-content: center; touch-action: pan-y; }
-  .lightbox-img { max-width: 92vw; max-height: 82vh; object-fit: contain; user-select: none; -webkit-user-select: none; }
+  .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 40; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; }
+  .lightbox-img { max-width: 100vw; max-height: 100vh; width: auto; height: auto; object-fit: contain; user-select: none; -webkit-user-select: none; touch-action: none; will-change: transform; }
   .lightbox-close { position: absolute; top: 16px; right: 16px; background: rgba(255,255,255,0.12); border: none; color: #fff; font-size: 20px; width: 38px; height: 38px; border-radius: 50%; cursor: pointer; }
   .lightbox-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,0.14); border: none; color: #fff; font-size: 28px; width: 44px; height: 44px; border-radius: 50%; cursor: pointer; line-height: 1; }
   .lightbox-prev { left: 10px; }
@@ -646,7 +646,17 @@ function renderPresence(list) {
   }).join("");
 }
 
+let renderScheduled = false;
 function renderMessages() {
+  if (renderScheduled) return;
+  renderScheduled = true;
+  requestAnimationFrame(() => {
+    renderScheduled = false;
+    renderMessagesImmediate();
+  });
+}
+
+function renderMessagesImmediate() {
   const myName = nameInput.value.trim();
   const list = Array.from(decryptedCache.entries())
     .map(([id, m]) => ({ id, ...m, self: m.sender === myName }))
@@ -799,7 +809,7 @@ async function handleSnapshot(raw) {
         if (m.capIv && m.capCt) {
           try { caption = await decryptText(cryptoKey, m.capIv, m.capCt); } catch { caption = "⚠"; }
         }
-        decryptedCache.set(m.id, { type: "file-group", sender: m.sender, ts: m.ts, files: decFiles, caption, edited: !!m.edited, replyToId, replyToSender, replyToText });
+        decryptedCache.set(m.id, { type: "file-group", sender: m.sender, ts: m.ts, files: decFiles, caption, edited: !!m.edited, editTs: m.editTs || 0, replyToId, replyToSender, replyToText });
         decFiles.forEach((f, idx) => {
           if ((f.mime || "").startsWith("image/")) openGroupFile(m.id, idx); // fire-and-forget thumbnail preview
         });
@@ -825,7 +835,7 @@ async function handleSnapshot(raw) {
             name: meta.name, mime: meta.mime, size: m.size,
             url: m.url, path: m.path, fileIv: m.fileIv,
             blobUrl: null, loading: false, loadError: false,
-            caption, edited: !!m.edited,
+            caption, edited: !!m.edited, editTs: m.editTs || 0,
             replyToId, replyToSender, replyToText,
           });
           if ((meta.mime || "").startsWith("image/")) {
@@ -845,24 +855,24 @@ async function handleSnapshot(raw) {
           try { replyToText = await decryptText(cryptoKey, m.replyTo.iv, m.replyTo.ct); }
           catch { replyToText = "⚠"; }
         }
-        decryptedCache.set(m.id, { sender: m.sender, text, ts: m.ts, edited: !!m.edited, replyToId, replyToSender, replyToText });
+        decryptedCache.set(m.id, { sender: m.sender, text, ts: m.ts, edited: !!m.edited, editTs: m.editTs || 0, replyToId, replyToSender, replyToText });
       } catch {
         decryptedCache.set(m.id, { sender: m.sender, text: "⚠ не удалось расшифровать", ts: m.ts, edited: !!m.edited });
       }
     } else {
       // reflect edits on already-cached messages: text for plain messages, caption for file/file-group
       const cached = decryptedCache.get(m.id);
-      if (!!m.edited !== cached.edited) {
+      if ((m.editTs || 0) !== (cached.editTs || 0)) {
         if (cached.type === "file" || cached.type === "file-group") {
           let caption = null;
           if (m.capIv && m.capCt) {
             try { caption = await decryptText(cryptoKey, m.capIv, m.capCt); } catch { caption = "⚠"; }
           }
-          decryptedCache.set(m.id, { ...cached, caption, edited: !!m.edited });
+          decryptedCache.set(m.id, { ...cached, caption, edited: !!m.edited, editTs: m.editTs || 0 });
         } else {
           try {
             const text = await decryptText(cryptoKey, m.iv, m.ct);
-            decryptedCache.set(m.id, { ...cached, text, edited: !!m.edited });
+            decryptedCache.set(m.id, { ...cached, text, edited: !!m.edited, editTs: m.editTs || 0 });
           } catch {}
         }
       }
@@ -997,13 +1007,13 @@ async function handleSend() {
       if (isCaptionEdit) {
         if (text) {
           const { iv, ct } = await encryptText(cryptoKey, text);
-          await updateMessage(room, editingId, { capIv: iv, capCt: ct, edited: true });
+          await updateMessage(room, editingId, { capIv: iv, capCt: ct, edited: true, editTs: Date.now() });
         } else {
-          await updateMessage(room, editingId, { capIv: null, capCt: null, edited: true });
+          await updateMessage(room, editingId, { capIv: null, capCt: null, edited: true, editTs: Date.now() });
         }
       } else {
         const { iv, ct } = await encryptText(cryptoKey, text);
-        await updateMessage(room, editingId, { iv, ct, edited: true });
+        await updateMessage(room, editingId, { iv, ct, edited: true, editTs: Date.now() });
       }
     } else {
       const { iv, ct } = await encryptText(cryptoKey, text);
@@ -1288,6 +1298,7 @@ function updateLightbox() {
   lightboxCounter.textContent = multi ? `${lightboxIndex + 1} / ${lightboxImages.length}` : "";
   lightboxPrev.style.display = multi ? "flex" : "none";
   lightboxNext.style.display = multi ? "flex" : "none";
+  resetZoom();
 }
 function openLightbox(urls, startIndex) {
   if (!urls || urls.length === 0) return;
@@ -1312,15 +1323,63 @@ lightboxClose.addEventListener("click", closeLightbox);
 lightboxPrev.addEventListener("click", lightboxGoPrev);
 lightboxNext.addEventListener("click", lightboxGoNext);
 lightbox.addEventListener("click", (e) => { if (e.target === lightbox) closeLightbox(); });
-let lightboxTouchStartX = null;
-lightboxImg.addEventListener("touchstart", (e) => { lightboxTouchStartX = e.touches[0].clientX; });
-lightboxImg.addEventListener("touchend", (e) => {
-  if (lightboxTouchStartX === null) return;
-  const dx = e.changedTouches[0].clientX - lightboxTouchStartX;
-  if (Math.abs(dx) > 40 && lightboxImages.length > 1) {
-    if (dx < 0) lightboxGoNext(); else lightboxGoPrev();
+
+// --- pinch-zoom / pan / double-tap / swipe-to-navigate for the lightbox image ---
+let lbScale = 1, lbStartScale = 1, lbPanX = 0, lbPanY = 0, lbDragStartX = 0, lbDragStartY = 0;
+let lbPinchStartDist = 0;
+let lbSwipeStartX = null;
+let lbLastTapTime = 0;
+
+function lbDistance(t1, t2) {
+  const dx = t2.clientX - t1.clientX, dy = t2.clientY - t1.clientY;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+function applyLightboxTransform() {
+  lightboxImg.style.transform = `translate(${lbPanX}px, ${lbPanY}px) scale(${lbScale})`;
+}
+function resetZoom() {
+  lbScale = 1; lbPanX = 0; lbPanY = 0;
+  applyLightboxTransform();
+}
+
+lightboxImg.addEventListener("touchstart", (e) => {
+  if (e.touches.length === 2) {
+    lbPinchStartDist = lbDistance(e.touches[0], e.touches[1]);
+    lbStartScale = lbScale;
+    lbSwipeStartX = null;
+  } else if (e.touches.length === 1) {
+    lbDragStartX = e.touches[0].clientX - lbPanX;
+    lbDragStartY = e.touches[0].clientY - lbPanY;
+    lbSwipeStartX = e.touches[0].clientX;
+    const now = Date.now();
+    if (now - lbLastTapTime < 300) {
+      if (lbScale > 1) resetZoom(); else { lbScale = 2.5; applyLightboxTransform(); }
+    }
+    lbLastTapTime = now;
   }
-  lightboxTouchStartX = null;
+}, { passive: true });
+
+lightboxImg.addEventListener("touchmove", (e) => {
+  if (e.touches.length === 2) {
+    const dist = lbDistance(e.touches[0], e.touches[1]);
+    lbScale = Math.min(5, Math.max(1, lbStartScale * (dist / lbPinchStartDist)));
+    applyLightboxTransform();
+  } else if (e.touches.length === 1 && lbScale > 1) {
+    lbPanX = e.touches[0].clientX - lbDragStartX;
+    lbPanY = e.touches[0].clientY - lbDragStartY;
+    applyLightboxTransform();
+  }
+}, { passive: true });
+
+lightboxImg.addEventListener("touchend", (e) => {
+  if (lbScale <= 1 && lbSwipeStartX !== null && e.changedTouches.length) {
+    const dx = e.changedTouches[0].clientX - lbSwipeStartX;
+    if (Math.abs(dx) > 40 && lightboxImages.length > 1) {
+      if (dx < 0) lightboxGoNext(); else lightboxGoPrev();
+    }
+  }
+  if (lbScale < 1.05) resetZoom();
+  lbSwipeStartX = null;
 });
 
 function updateScrollToBottomBtn() {
@@ -1362,17 +1421,17 @@ selectDeleteBtn.addEventListener("click", async () => {
   if (!window.confirm(`Удалить ${count} ${pluralMessages(count)} у всех участников комнаты?`)) return;
   try {
     const room = await hashRoom(passphraseValue);
-    for (const id of Array.from(selectedIds)) {
+    await Promise.all(Array.from(selectedIds).map(async (id) => {
       const m = decryptedCache.get(id);
       try {
         if (m && m.type === "file" && m.path) {
           await deleteStoredFile(m.path);
         } else if (m && m.type === "file-group" && Array.isArray(m.files)) {
-          for (const f of m.files) { if (f.path) await deleteStoredFile(f.path); }
+          await Promise.all(m.files.map((f) => (f.path ? deleteStoredFile(f.path) : Promise.resolve())));
         }
         await deleteMessage(room, id);
       } catch {}
-    }
+    }));
   } catch {
     showChatError("Не получилось удалить некоторые сообщения.");
   } finally {
