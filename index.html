@@ -1522,17 +1522,23 @@ messagesEl.addEventListener("click", (e) => {
   if (quote) { scrollToMessage(quote.dataset.replyTarget); return; }
   const groupEl = e.target.closest("[data-gid][data-gidx]");
   if (groupEl) {
-    const gid = groupEl.dataset.gid;
-    const gidx = Number(groupEl.dataset.gidx);
-    const m = decryptedCache.get(gid);
-    const f = m && m.files && m.files[gidx];
-    if (f && f.blobUrl && (f.mime || "").startsWith("image/")) {
-      const imageUrls = m.files.filter((x) => (x.mime || "").startsWith("image/") && x.blobUrl).map((x) => x.blobUrl);
-      const startIdx = imageUrls.indexOf(f.blobUrl);
-      openLightbox(imageUrls, Math.max(startIdx, 0));
-      return;
+    try {
+      const gid = groupEl.dataset.gid;
+      const gidx = Number(groupEl.dataset.gidx);
+      const m = decryptedCache.get(gid);
+      const f = m && m.files && m.files[gidx];
+      if (f && f.blobUrl) {
+        if ((f.mime || "").startsWith("image/")) {
+          const imageUrls = m.files.filter((x) => (x.mime || "").startsWith("image/") && x.blobUrl).map((x) => x.blobUrl);
+          const startIdx = imageUrls.indexOf(f.blobUrl);
+          openLightbox(imageUrls, Math.max(startIdx, 0));
+        }
+        return;
+      }
+      openGroupFile(gid, gidx);
+    } catch (err) {
+      showChatError(`Ошибка открытия фото: ${err?.message || err}`);
     }
-    openGroupFile(gid, gidx);
     return;
   }
   const card = e.target.closest(".file-card[data-id]");
