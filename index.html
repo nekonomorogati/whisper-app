@@ -1513,6 +1513,10 @@ function scrollToMessage(id) {
 }
 
 messagesEl.addEventListener("click", (e) => {
+  const debugThumb = e.target.closest(".group-thumb");
+  if (debugThumb) {
+    showChatError(`DEBUG: tag=${debugThumb.tagName} gid=${debugThumb.dataset.gid} gidx=${debugThumb.dataset.gidx} hasBlobUrl=${!!(decryptedCache.get(debugThumb.dataset.gid)?.files?.[Number(debugThumb.dataset.gidx)]?.blobUrl)}`);
+  }
   if (selectMode) {
     const row = findRow(e.target);
     if (row && row.dataset.self === "true") toggleSelect(row.dataset.id);
