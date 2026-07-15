@@ -1226,12 +1226,43 @@ function observeLazyImages() {
   });
 }
 
+function patchMessageNode(id) {
+  const row = messagesEl.querySelector(`.msg-row[data-id="${id}"]`);
+  const m = decryptedCache.get(id);
+  if (!row || !m) return false;
+  const bubble = row.querySelector(".bubble");
+  if (!bubble) return false;
+
+  const editedTag = m.edited ? `<span class="edited-tag">изменено</span>` : "";
+  const replyHtml = m.replyToId ? `
+    <div class="reply-quote" data-reply-target="${m.replyToId}">
+      <span class="rq-sender">${escapeHtml(m.replyToSender || "")}</span>
+      <span>${escapeHtml(truncate(m.replyToText || "", 80))}</span>
+    </div>` : "";
+  const timeHtml = `<span class="msg-time">${formatTime(m.ts)}</span>`;
+  const checkHtml = (selectMode && m.self) ? `<span class="select-check ${selectedIds.has(id) ? "checked" : ""}"></span>` : "";
+
+  let bodyHtml;
+  if (m.type === "file-group") {
+    const capHtml = m.caption ? `<div class="msg-caption">${linkify(escapeHtml(m.caption))}</div>` : "";
+    bodyHtml = renderFileGroupBody(m) + capHtml + editedTag + timeHtml;
+  } else if (m.type === "file") {
+    const capHtml = m.caption ? `<div class="msg-caption">${linkify(escapeHtml(m.caption))}</div>` : "";
+    bodyHtml = renderFileBody(m) + capHtml + editedTag + timeHtml;
+  } else {
+    bodyHtml = `<span>${linkify(escapeHtml(m.text))}</span>${editedTag}${timeHtml}`;
+  }
+  bubble.innerHTML = `${checkHtml}${replyHtml}${bodyHtml}`;
+  observeLazyImages();
+  return true;
+}
+
 async function openFile(id) {
   const m = decryptedCache.get(id);
   if (!m || m.type !== "file" || m.blobUrl || m.loading) return;
   m.loading = true;
   m.loadError = false;
-  renderMessages();
+  if (!patchMessageNode(id)) renderMessages();
   try {
     const resp = await fetchWithRetry(m.url);
     const encBuf = await resp.arrayBuffer();
@@ -1239,7 +1270,7 @@ async function openFile(id) {
     const blob = new Blob([plainBuf], { type: m.mime || "application/octet-stream" });
     m.blobUrl = URL.createObjectURL(blob);
     m.loading = false;
-    renderMessages();
+    if (!patchMessageNode(id)) renderMessages();
     if (!(m.mime || "").startsWith("image/") && !(m.mime || "").startsWith("video/")) {
       const fileForShare = new File([blob], m.name || "file", { type: m.mime || "application/octet-stream" });
       let shared = false;
@@ -1263,7 +1294,7 @@ async function openFile(id) {
   } catch {
     m.loading = false;
     m.loadError = true;
-    renderMessages();
+    if (!patchMessageNode(id)) renderMessages();
     showChatError("Не получилось открыть файл.");
   }
 }
@@ -1275,7 +1306,7 @@ async function openGroupFile(msgId, idx) {
   if (!f || f.blobUrl || f.loading) return;
   f.loading = true;
   f.loadError = false;
-  renderMessages();
+  if (!patchMessageNode(msgId)) renderMessages();
   try {
     const resp = await fetchWithRetry(f.url);
     const encBuf = await resp.arrayBuffer();
@@ -1283,7 +1314,7 @@ async function openGroupFile(msgId, idx) {
     const blob = new Blob([plainBuf], { type: f.mime || "application/octet-stream" });
     f.blobUrl = URL.createObjectURL(blob);
     f.loading = false;
-    renderMessages();
+    if (!patchMessageNode(msgId)) renderMessages();
     if (!(f.mime || "").startsWith("image/") && !(f.mime || "").startsWith("video/")) {
       const fileForShare = new File([blob], f.name || "file", { type: f.mime || "application/octet-stream" });
       let shared = false;
@@ -1307,7 +1338,7 @@ async function openGroupFile(msgId, idx) {
   } catch {
     f.loading = false;
     f.loadError = true;
-    renderMessages();
+    if (!patchMessageNode(msgId)) renderMessages();
     showChatError("Не получилось открыть файл.");
   }
 }
@@ -1619,7 +1650,7 @@ async function deleteGroupPhoto(msgId, idx) {
       }));
       await updateMessage(room, msgId, { files: rawRemaining });
       decryptedCache.set(msgId, { ...m, files: remaining });
-      renderMessages();
+      if (!patchMessageNode(msgId)) renderMessages();
     }
   } catch {
     showChatError("Не получилось удалить фото.");
