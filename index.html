@@ -719,6 +719,7 @@ function renderMessagesImmediate() {
     messagesEl.scrollTop = Math.max(0, messagesEl.scrollHeight - messagesEl.clientHeight - distanceFromBottom);
   }
   updateScrollToBottomBtn();
+  observeLazyImages();
 }
 
 function renderFileBody(m) {
@@ -810,9 +811,6 @@ async function handleSnapshot(raw) {
           try { caption = await decryptText(cryptoKey, m.capIv, m.capCt); } catch { caption = "⚠"; }
         }
         decryptedCache.set(m.id, { type: "file-group", sender: m.sender, ts: m.ts, files: decFiles, caption, edited: !!m.edited, editTs: m.editTs || 0, replyToId, replyToSender, replyToText });
-        decFiles.forEach((f, idx) => {
-          if ((f.mime || "").startsWith("image/")) openGroupFile(m.id, idx); // fire-and-forget thumbnail preview
-        });
         continue;
       }
       if (m.type === "file") {
@@ -838,9 +836,6 @@ async function handleSnapshot(raw) {
             caption, edited: !!m.edited, editTs: m.editTs || 0,
             replyToId, replyToSender, replyToText,
           });
-          if ((meta.mime || "").startsWith("image/")) {
-            openFile(m.id); // fire-and-forget: shows a thumbnail automatically
-          }
         } catch {
           decryptedCache.set(m.id, { type: "file", sender: m.sender, ts: m.ts, name: "не удалось расшифровать", mime: "", size: m.size, url: m.url, path: m.path, fileIv: m.fileIv, blobUrl: null, loading: false, loadError: true, edited: !!m.edited });
         }
@@ -1195,7 +1190,7 @@ async function fetchWithRetry(url, attempts = 3, delayMs = 900) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
     try {
-      const resp = await fetch(url, { cache: "no-store" });
+      const resp = await fetch(url);
       if (resp.ok) return resp;
       lastErr = new Error(`HTTP ${resp.status}`);
     } catch (err) {
@@ -1204,6 +1199,31 @@ async function fetchWithRetry(url, attempts = 3, delayMs = 900) {
     if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
   }
   throw lastErr || new Error("fetch failed");
+}
+
+const lazyImageObserver = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    const el = entry.target;
+    lazyImageObserver.unobserve(el);
+    if (el.dataset.gid) {
+      openGroupFile(el.dataset.gid, Number(el.dataset.gidx));
+    } else if (el.dataset.id) {
+      openFile(el.dataset.id);
+    }
+  }
+}, { root: messagesEl, rootMargin: "300px 0px" });
+
+function observeLazyImages() {
+  messagesEl.querySelectorAll(".file-card[data-id]").forEach((el) => {
+    const m = decryptedCache.get(el.dataset.id);
+    if (m && m.type === "file" && (m.mime || "").startsWith("image/")) {
+      lazyImageObserver.observe(el);
+    }
+  });
+  messagesEl.querySelectorAll(".group-thumb-pending[data-gid][data-gidx]").forEach((el) => {
+    lazyImageObserver.observe(el);
+  });
 }
 
 async function openFile(id) {
