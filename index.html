@@ -241,6 +241,9 @@
       <button type="button" id="wallpaper-pick-btn" class="link-btn">Выбрать фото…</button>
       <button type="button" id="wallpaper-reset-btn" class="link-btn" style="display:none;">Сбросить фон</button>
       <input type="file" id="wallpaper-input" accept="image/*" style="display:none;" />
+      <hr class="theme-panel-divider" />
+      <span class="theme-panel-label">Уведомления</span>
+      <button type="button" id="notif-btn" class="link-btn">Включить уведомления</button>
     </div>
   </header>
   <div id="select-bar" class="select-bar hidden">
@@ -515,6 +518,7 @@ let replyContext = null;   // { id, sender, text }
 let editingId = null;      // id of message currently being edited
 let activeSheetId = null;  // message id the action sheet refers to
 let selectMode = false;
+let firstSnapshotHandled = false;
 let selectedIds = new Set();
 
 // --- DOM refs ---
@@ -533,6 +537,7 @@ const themePanel = document.getElementById("theme-panel");
 const wallpaperPickBtn = document.getElementById("wallpaper-pick-btn");
 const wallpaperResetBtn = document.getElementById("wallpaper-reset-btn");
 const wallpaperInput = document.getElementById("wallpaper-input");
+const notifBtn = document.getElementById("notif-btn");
 const messagesEl = document.getElementById("messages");
 const presenceBar = document.getElementById("presence-bar");
 const chatError = document.getElementById("chat-error");
@@ -751,6 +756,42 @@ function pluralMessages(n) {
   return "сообщений";
 }
 
+function updateNotifBtn() {
+  if (!("Notification" in window)) {
+    notifBtn.textContent = "Не поддерживается браузером";
+    notifBtn.disabled = true;
+    return;
+  }
+  if (Notification.permission === "granted") {
+    notifBtn.textContent = "Уведомления включены ✓";
+    notifBtn.disabled = true;
+  } else if (Notification.permission === "denied") {
+    notifBtn.textContent = "Заблокировано в браузере";
+    notifBtn.disabled = true;
+  } else {
+    notifBtn.textContent = "Включить уведомления";
+    notifBtn.disabled = false;
+  }
+}
+notifBtn.addEventListener("click", async () => {
+  try { await Notification.requestPermission(); } catch {}
+  updateNotifBtn();
+});
+updateNotifBtn();
+
+function notifyNewMessage(m) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  if (document.visibilityState === "visible" && document.hasFocus()) return; // already looking at the chat
+  let body;
+  if (m.type === "file-group") body = `📎 Альбом (${m.files.length} ${pluralFiles(m.files.length)})`;
+  else if (m.type === "file") body = `📎 ${m.name || "Файл"}`;
+  else body = m.text || "";
+  try {
+    const n = new Notification(m.sender, { body, icon: "icon-192.png" });
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch {}
+}
+
 function renderFileGroupBody(m) {
   const media = [];
   const docs = [];
@@ -785,9 +826,11 @@ function renderFileGroupBody(m) {
 async function handleSnapshot(raw) {
   if (!cryptoKey) return;
   const rawIds = new Set(raw.map((m) => m.id));
+  const newlyAdded = [];
 
   for (const m of raw) {
     if (!decryptedCache.has(m.id)) {
+      newlyAdded.push(m.id);
       if (m.type === "file-group") {
         const decFiles = [];
         for (const f of (m.files || [])) {
@@ -885,6 +928,15 @@ async function handleSnapshot(raw) {
   }
 
   renderMessages();
+
+  if (firstSnapshotHandled) {
+    const myName = nameInput.value.trim();
+    for (const id of newlyAdded) {
+      const nm = decryptedCache.get(id);
+      if (nm && nm.sender !== myName) notifyNewMessage(nm);
+    }
+  }
+  firstSnapshotHandled = true;
 }
 
 async function handleJoin() {
@@ -903,6 +955,7 @@ async function handleJoin() {
     const room = await hashRoom(passphrase);
     decryptedCache.clear();
     ownIds.clear();
+    firstSnapshotHandled = false;
     whoName.textContent = name;
 
     if (rememberCheckbox.checked) { saveLogin(name, passphrase); } else { clearSavedLogin(); }
