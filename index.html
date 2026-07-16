@@ -245,6 +245,8 @@
       <span class="theme-panel-label">Уведомления</span>
       <button type="button" id="notif-btn" class="link-btn">Включить уведомления</button>
       <button type="button" id="notif-test-btn" class="link-btn">Проверить (тест)</button>
+      <hr class="theme-panel-divider" />
+      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-07-16-3</span>
     </div>
   </header>
   <div id="select-bar" class="select-bar hidden">
@@ -799,16 +801,16 @@ function playNotifSound() {
 
 async function showAppNotification(title, options) {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const isStandalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
   if ("serviceWorker" in navigator) {
-    try {
-      const reg = await navigator.serviceWorker.ready;
-      await reg.showNotification(title, options);
-      return;
-    } catch (err) {
-      throw err;
-    }
+    const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification(title, options);
+    return;
   }
-  new Notification(title, options); // fallback for plain-browser-tab contexts
+  if (isStandalone) {
+    throw new Error("Service worker недоступен, а в установленном приложении показать уведомление напрямую нельзя.");
+  }
+  new Notification(title, options); // fallback only for a plain browser tab, never for the installed app
 }
 
 function notifyNewMessage(m) {
