@@ -244,6 +244,7 @@
       <hr class="theme-panel-divider" />
       <span class="theme-panel-label">Уведомления</span>
       <button type="button" id="notif-btn" class="link-btn">Включить уведомления</button>
+      <button type="button" id="notif-test-btn" class="link-btn">Проверить (тест)</button>
     </div>
   </header>
   <div id="select-bar" class="select-bar hidden">
@@ -276,7 +277,7 @@
     </div>
     <input type="file" id="file-input-media" style="display:none" accept="image/*,video/*" multiple />
     <input type="file" id="file-input-doc" style="display:none" accept=".pdf,.doc,.docx,.zip,.fb2" multiple />
-    <textarea id="draft" placeholder="Сообщение…" rows="1"></textarea>
+    <textarea id="draft" placeholder="Сообщение…" rows="1" enterkeyhint="enter"></textarea>
     <button id="send-btn" aria-label="Отправить">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
     </button>
@@ -538,6 +539,7 @@ const wallpaperPickBtn = document.getElementById("wallpaper-pick-btn");
 const wallpaperResetBtn = document.getElementById("wallpaper-reset-btn");
 const wallpaperInput = document.getElementById("wallpaper-input");
 const notifBtn = document.getElementById("notif-btn");
+const notifTestBtn = document.getElementById("notif-test-btn");
 const messagesEl = document.getElementById("messages");
 const presenceBar = document.getElementById("presence-bar");
 const chatError = document.getElementById("chat-error");
@@ -779,9 +781,26 @@ notifBtn.addEventListener("click", async () => {
 });
 updateNotifBtn();
 
+function playNotifSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.3);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.35);
+  } catch {}
+}
+
 function notifyNewMessage(m) {
+  playNotifSound();
   if (!("Notification" in window) || Notification.permission !== "granted") return;
-  if (document.visibilityState === "visible" && document.hasFocus()) return; // already looking at the chat
+  if (document.visibilityState === "visible" && document.hasFocus()) return; // sound already played; skip the system banner while actively looking at the chat
   let body;
   if (m.type === "file-group") body = `📎 Альбом (${m.files.length} ${pluralFiles(m.files.length)})`;
   else if (m.type === "file") body = `📎 ${m.name || "Файл"}`;
@@ -791,6 +810,20 @@ function notifyNewMessage(m) {
     n.onclick = () => { window.focus(); n.close(); };
   } catch {}
 }
+
+notifTestBtn.addEventListener("click", () => {
+  playNotifSound();
+  if ("Notification" in window && Notification.permission === "granted") {
+    try {
+      const n = new Notification("Тестовое уведомление", { body: "Если видишь это — всё работает.", icon: "icon-192.png" });
+      n.onclick = () => { window.focus(); n.close(); };
+    } catch (err) {
+      showChatError(`Не получилось показать уведомление: ${err?.message || err}`);
+    }
+  } else {
+    showChatError("Уведомления не разрешены — сначала нажми «Включить уведомления».");
+  }
+});
 
 function renderFileGroupBody(m) {
   const media = [];
@@ -1405,17 +1438,30 @@ function updateLightbox() {
   lightboxNext.style.display = multi ? "flex" : "none";
   resetZoom();
 }
+let lightboxHistoryPushed = false;
 function openLightbox(urls, startIndex) {
   if (!urls || urls.length === 0) return;
   lightboxImages = urls;
   lightboxIndex = Math.max(0, Math.min(startIndex, urls.length - 1));
   updateLightbox();
   lightbox.classList.remove("hidden");
+  history.pushState({ whisperModal: "lightbox" }, "");
+  lightboxHistoryPushed = true;
 }
 function closeLightbox() {
   lightbox.classList.add("hidden");
   lightboxImg.src = "";
+  if (lightboxHistoryPushed) {
+    lightboxHistoryPushed = false;
+    history.back();
+  }
 }
+window.addEventListener("popstate", () => {
+  if (!lightbox.classList.contains("hidden")) {
+    lightboxHistoryPushed = false; // the back navigation already consumed the pushed state
+    closeLightbox();
+  }
+});
 function lightboxGoPrev() {
   lightboxIndex = (lightboxIndex - 1 + lightboxImages.length) % lightboxImages.length;
   updateLightbox();
@@ -1735,12 +1781,6 @@ joinBtn.addEventListener("click", handleJoin);
 passInput.addEventListener("keydown", (e) => { if (e.key === "Enter") handleJoin(); });
 leaveBtn.addEventListener("click", handleLeave);
 sendBtn.addEventListener("click", handleSend);
-draftInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    handleSend();
-  }
-});
 function autoResizeDraft() {
   draftInput.style.height = "auto";
   draftInput.style.height = Math.min(draftInput.scrollHeight, 140) + "px";
