@@ -1,4 +1,4 @@
-const CACHE_NAME = "whisper-shell-v2";
+const CACHE_NAME = "whisper-shell-v3";
 const SHELL_FILES = ["./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -22,5 +22,17 @@ self.addEventListener("fetch", (event) => {
   // falls back to the cached app shell only if offline.
   event.respondWith(
     fetch(event.request).catch(() => caches.match(event.request))
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ("focus" in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow("./index.html");
+    })
   );
 });

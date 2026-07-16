@@ -797,31 +797,40 @@ function playNotifSound() {
   } catch {}
 }
 
+async function showAppNotification(title, options) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  if ("serviceWorker" in navigator) {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      await reg.showNotification(title, options);
+      return;
+    } catch (err) {
+      throw err;
+    }
+  }
+  new Notification(title, options); // fallback for plain-browser-tab contexts
+}
+
 function notifyNewMessage(m) {
   playNotifSound();
-  if (!("Notification" in window) || Notification.permission !== "granted") return;
   if (document.visibilityState === "visible" && document.hasFocus()) return; // sound already played; skip the system banner while actively looking at the chat
   let body;
   if (m.type === "file-group") body = `📎 Альбом (${m.files.length} ${pluralFiles(m.files.length)})`;
   else if (m.type === "file") body = `📎 ${m.name || "Файл"}`;
   else body = m.text || "";
-  try {
-    const n = new Notification(m.sender, { body, icon: "icon-192.png" });
-    n.onclick = () => { window.focus(); n.close(); };
-  } catch {}
+  showAppNotification(m.sender, { body, icon: "icon-192.png" }).catch(() => {});
 }
 
-notifTestBtn.addEventListener("click", () => {
+notifTestBtn.addEventListener("click", async () => {
   playNotifSound();
-  if ("Notification" in window && Notification.permission === "granted") {
-    try {
-      const n = new Notification("Тестовое уведомление", { body: "Если видишь это — всё работает.", icon: "icon-192.png" });
-      n.onclick = () => { window.focus(); n.close(); };
-    } catch (err) {
-      showChatError(`Не получилось показать уведомление: ${err?.message || err}`);
-    }
-  } else {
+  if (!("Notification" in window) || Notification.permission !== "granted") {
     showChatError("Уведомления не разрешены — сначала нажми «Включить уведомления».");
+    return;
+  }
+  try {
+    await showAppNotification("Тестовое уведомление", { body: "Если видишь это — всё работает." });
+  } catch (err) {
+    showChatError(`Не получилось показать уведомление: ${err?.message || err}`);
   }
 });
 
