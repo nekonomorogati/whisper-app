@@ -166,8 +166,8 @@
 
   .voice-player { display: flex; align-items: center; gap: 10px; min-width: 190px; }
   .voice-play-btn { width: 34px; height: 34px; border-radius: 50%; border: none; background: rgba(127,127,127,0.25); color: inherit; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-  .voice-progress { flex: 1; height: 4px; border-radius: 2px; background: rgba(127,127,127,0.3); overflow: hidden; }
-  .voice-progress-fill { height: 100%; background: currentColor; opacity: 0.8; }
+  .voice-progress { flex: 1; height: 4px; border-radius: 2px; background: rgba(127,127,127,0.3); overflow: visible; cursor: pointer; touch-action: none; padding: 10px 0; margin: -10px 0; background-clip: content-box; }
+  .voice-progress-fill { height: 100%; background: currentColor; opacity: 0.8; pointer-events: none; }
   .voice-duration { font-size: 12px; opacity: 0.75; font-variant-numeric: tabular-nums; flex-shrink: 0; }
   .attach-wrap { position: relative; flex-shrink: 0; }
   .attach-menu { position: absolute; bottom: 46px; left: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 6px; display: flex; flex-direction: column; gap: 2px; z-index: 15; min-width: 170px; }
@@ -261,7 +261,7 @@
       <button type="button" id="notif-btn" class="link-btn">Включить уведомления</button>
       <button type="button" id="notif-test-btn" class="link-btn">Проверить (тест)</button>
       <hr class="theme-panel-divider" />
-      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-07-16-4-voice</span>
+      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-07-16-5-seek</span>
     </div>
   </header>
   <div id="select-bar" class="select-bar hidden">
@@ -1406,16 +1406,38 @@ const voiceAudioElements = new Map();
 function renderVoiceBody(m) {
   const durText = formatDuration(m.playing ? m.currentTime : (m.duration || 0));
   if (m.loadError) {
-    return `<div class="voice-player"><button class="voice-play-btn" disabled>⚠</button><span class="voice-duration">Ошибка</span></div>`;
+    return `<div class="voice-player" data-voice-id="${m.id}"><button class="voice-play-btn" disabled>⚠</button><span class="voice-duration">Ошибка</span></div>`;
   }
   const playIcon = m.loading ? "…" : (m.playing ? "❚❚" : "▶");
   const progressPct = Math.round((m.progress || 0) * 100);
   return `
-    <div class="voice-player">
-      <button type="button" class="voice-play-btn" data-voice-id="${m.id}">${playIcon}</button>
+    <div class="voice-player" data-voice-id="${m.id}">
+      <button type="button" class="voice-play-btn">${playIcon}</button>
       <div class="voice-progress"><div class="voice-progress-fill" style="width:${progressPct}%"></div></div>
       <span class="voice-duration">${durText}</span>
     </div>`;
+}
+
+let voiceSeekId = null;
+function applyVoiceSeek(id, clientX, commit) {
+  const player = messagesEl.querySelector(`.voice-player[data-voice-id="${id}"]`);
+  if (!player) return;
+  const bar = player.querySelector(".voice-progress");
+  const fill = player.querySelector(".voice-progress-fill");
+  const durationEl = player.querySelector(".voice-duration");
+  if (!bar) return;
+  const rect = bar.getBoundingClientRect();
+  if (rect.width === 0) return;
+  const fraction = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+  const m = decryptedCache.get(id);
+  const audio = voiceAudioElements.get(id);
+  const dur = (audio && audio.duration) || (m && m.duration) || 0;
+  if (fill) fill.style.width = `${fraction * 100}%`;
+  if (durationEl) durationEl.textContent = formatDuration(fraction * dur);
+  if (m) { m.progress = fraction; m.currentTime = fraction * dur; }
+  if (commit && audio && audio.duration) {
+    audio.currentTime = fraction * audio.duration;
+  }
 }
 
 async function toggleVoicePlayback(id) {
@@ -1876,8 +1898,12 @@ messagesEl.addEventListener("click", (e) => {
   }
   const quote = e.target.closest(".reply-quote[data-reply-target]");
   if (quote) { scrollToMessage(quote.dataset.replyTarget); return; }
-  const voiceBtn = e.target.closest(".voice-play-btn[data-voice-id]");
-  if (voiceBtn) { toggleVoicePlayback(voiceBtn.dataset.voiceId); return; }
+  const voiceBtn = e.target.closest(".voice-play-btn");
+  if (voiceBtn) {
+    const voicePlayer = voiceBtn.closest(".voice-player[data-voice-id]");
+    if (voicePlayer) toggleVoicePlayback(voicePlayer.dataset.voiceId);
+    return;
+  }
   const groupEl = e.target.closest("[data-gid][data-gidx]");
   if (groupEl) {
     try {
@@ -1914,6 +1940,13 @@ function findRow(target) {
 }
 
 messagesEl.addEventListener("pointerdown", (e) => {
+  const bar = e.target.closest(".voice-progress");
+  const voicePlayer = e.target.closest(".voice-player[data-voice-id]");
+  if (bar && voicePlayer) {
+    voiceSeekId = voicePlayer.dataset.voiceId;
+    applyVoiceSeek(voiceSeekId, e.clientX, true);
+    return;
+  }
   if (selectMode) return;
   const row = findRow(e.target);
   if (!row) return;
@@ -1929,9 +1962,17 @@ messagesEl.addEventListener("pointerdown", (e) => {
   }, 450);
 });
 ["pointerup", "pointercancel", "pointerleave"].forEach((evt) => {
-  messagesEl.addEventListener(evt, () => { clearTimeout(pressTimer); });
+  messagesEl.addEventListener(evt, () => {
+    clearTimeout(pressTimer);
+    if (voiceSeekId) { if (!patchMessageNode(voiceSeekId)) renderMessages(); }
+    voiceSeekId = null;
+  });
 });
 messagesEl.addEventListener("pointermove", (e) => {
+  if (voiceSeekId) {
+    applyVoiceSeek(voiceSeekId, e.clientX, true);
+    return;
+  }
   if (!pressStartXY) return;
   const dx = Math.abs(e.clientX - pressStartXY.x);
   const dy = Math.abs(e.clientY - pressStartXY.y);
