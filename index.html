@@ -166,8 +166,8 @@
 
   .voice-player { display: flex; align-items: center; gap: 10px; min-width: 190px; }
   .voice-play-btn { width: 34px; height: 34px; border-radius: 50%; border: none; background: rgba(127,127,127,0.25); color: inherit; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-  .voice-progress { flex: 1; height: 4px; border-radius: 2px; background: rgba(127,127,127,0.3); overflow: visible; cursor: pointer; touch-action: none; padding: 10px 0; margin: -10px 0; background-clip: content-box; }
-  .voice-progress-fill { height: 100%; background: currentColor; opacity: 0.8; pointer-events: none; }
+  .voice-progress { flex: 1; height: 6px; border-radius: 3px; background: rgba(127,127,127,0.3); cursor: pointer; touch-action: none; }
+  .voice-progress-fill { height: 100%; border-radius: 3px; background: currentColor; opacity: 0.85; pointer-events: none; }
   .voice-duration { font-size: 12px; opacity: 0.75; font-variant-numeric: tabular-nums; flex-shrink: 0; }
   .attach-wrap { position: relative; flex-shrink: 0; }
   .attach-menu { position: absolute; bottom: 46px; left: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 6px; display: flex; flex-direction: column; gap: 2px; z-index: 15; min-width: 170px; }
@@ -261,7 +261,7 @@
       <button type="button" id="notif-btn" class="link-btn">Включить уведомления</button>
       <button type="button" id="notif-test-btn" class="link-btn">Проверить (тест)</button>
       <hr class="theme-panel-divider" />
-      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-07-16-5-seek</span>
+      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-07-16-6-fix</span>
     </div>
   </header>
   <div id="select-bar" class="select-bar hidden">
