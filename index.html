@@ -344,7 +344,7 @@ const SUPABASE_URL = "https://alfgvgckpcwnkzlpnoit.supabase.co";
 const SUPABASE_KEY = "sb_publishable_soBH65doWx5J6ImyyAwOrw_payFwa1Z";
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const FILES_BUCKET = "whisper-files";
-const MAX_FILE_MB = 15;
+const MAX_FILE_MB = 45;
 
 async function uploadEncryptedFile(path, encryptedBuf) {
   const { error } = await supabase.storage.from(FILES_BUCKET).upload(path, new Blob([encryptedBuf]), {
