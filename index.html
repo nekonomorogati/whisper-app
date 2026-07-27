@@ -261,7 +261,7 @@
       <button type="button" id="notif-btn" class="link-btn">Включить уведомления</button>
       <button type="button" id="notif-test-btn" class="link-btn">Проверить (тест)</button>
       <hr class="theme-panel-divider" />
-      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-07-16-6-fix</span>
+      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-07-27-trash</span>
     </div>
   </header>
   <div id="select-bar" class="select-bar hidden">
@@ -336,7 +336,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
-import { getDatabase, ref, push, onValue, off, update, remove, set, onDisconnect, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-database.js";
+import { getDatabase, ref, push, onValue, off, update, remove, set, get, onDisconnect, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-database.js";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // --- Supabase (file storage only) ---
@@ -382,6 +382,14 @@ async function updateMessage(roomHash, id, patch) {
   return update(messageRef(roomHash, id), patch);
 }
 async function deleteMessage(roomHash, id) {
+  try {
+    const snap = await get(messageRef(roomHash, id));
+    if (snap.exists()) {
+      await set(ref(db, `trash/${roomHash}/${id}`), { ...snap.val(), deletedAt: Date.now() });
+    }
+  } catch {
+    // if the trash copy fails for any reason, still proceed with the delete below
+  }
   return remove(messageRef(roomHash, id));
 }
 function subscribeRoom(roomHash, callback) {
@@ -1656,11 +1664,11 @@ async function openFile(id) {
         a.remove();
       }
     }
-  } catch {
+  } catch (err) {
     m.loading = false;
     m.loadError = true;
     if (!patchMessageNode(id)) renderMessages();
-    showChatError("Не получилось открыть файл.");
+    showChatError(`Не получилось открыть файл: ${err?.message || err}`);
   }
 }
 
@@ -1700,11 +1708,11 @@ async function openGroupFile(msgId, idx) {
         a.remove();
       }
     }
-  } catch {
+  } catch (err) {
     f.loading = false;
     f.loadError = true;
     if (!patchMessageNode(msgId)) renderMessages();
-    showChatError("Не получилось открыть файл.");
+    showChatError(`Не получилось открыть файл: ${err?.message || err}`);
   }
 }
 
@@ -2048,6 +2056,11 @@ async function deleteGroupPhoto(msgId, idx) {
     const room = await hashRoom(passphraseValue);
     if (f.path) await deleteStoredFile(f.path);
     const remaining = m.files.filter((_, i) => i !== idx);
+    try {
+      await set(ref(db, `trash/${room}/${msgId}-photo-${idx}-${Date.now()}`), {
+        metaIv: f.metaIv, metaCt: f.metaCt, fileIv: f.fileIv, url: f.url, path: f.path, size: f.size, deletedAt: Date.now(),
+      });
+    } catch {}
     if (remaining.length === 0) {
       await deleteMessage(room, msgId);
     } else {
