@@ -261,7 +261,7 @@
       <button type="button" id="notif-btn" class="link-btn">Включить уведомления</button>
       <button type="button" id="notif-test-btn" class="link-btn">Проверить (тест)</button>
       <hr class="theme-panel-divider" />
-      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-07-27-trash</span>
+      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-07-27-errors</span>
     </div>
   </header>
   <div id="select-bar" class="select-bar hidden">
@@ -347,13 +347,22 @@ const FILES_BUCKET = "whisper-files";
 const MAX_FILE_MB = 45;
 
 async function uploadEncryptedFile(path, encryptedBuf) {
-  const { error } = await supabase.storage.from(FILES_BUCKET).upload(path, new Blob([encryptedBuf]), {
-    contentType: "application/octet-stream",
-    upsert: false,
-  });
-  if (error) throw error;
-  const { data } = supabase.storage.from(FILES_BUCKET).getPublicUrl(path);
-  return data.publicUrl;
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const { error } = await supabase.storage.from(FILES_BUCKET).upload(path, new Blob([encryptedBuf]), {
+        contentType: "application/octet-stream",
+        upsert: false,
+      });
+      if (error) throw error;
+      const { data } = supabase.storage.from(FILES_BUCKET).getPublicUrl(path);
+      return data.publicUrl;
+    } catch (err) {
+      lastError = err;
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+    }
+  }
+  throw lastError;
 }
 async function deleteStoredFile(path) {
   try { await supabase.storage.from(FILES_BUCKET).remove([path]); } catch {}
@@ -1271,8 +1280,8 @@ async function uploadOneFile(file, captionText) {
     }
     const id = await sendMessage(room, entry);
     ownIds.add(id);
-  } catch {
-    showChatError(`Не получилось отправить «${file.name}» — проверь соединение.`);
+  } catch (err) {
+    showChatError(`Не получилось отправить «${file.name}»: ${err?.message || err}`);
   }
 }
 
@@ -1401,8 +1410,8 @@ async function uploadVoiceMessage(blob, durationSec, mimeType) {
     }
     const id = await sendMessage(room, entry);
     ownIds.add(id);
-  } catch {
-    showChatError("Не получилось отправить голосовое сообщение.");
+  } catch (err) {
+    showChatError(`Не получилось отправить голосовое: ${err?.message || err}`);
   } finally {
     clearComposeContext();
   }
