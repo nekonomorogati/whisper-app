@@ -163,6 +163,13 @@
   .recording-hint { flex: 1; font-size: 13px; color: var(--text-muted); }
   #recording-cancel { background: none; border: none; color: var(--text-dim); font-size: 16px; cursor: pointer; }
   #recording-stop { background: var(--accent); color: var(--accent-text); border: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; }
+  #video-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; flex-shrink: 0; }
+  .video-recording-bar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-top: 1px solid var(--border); flex-shrink: 0; }
+  .video-circle { width: 60px; height: 60px; border-radius: 50%; overflow: hidden; background: #000; flex-shrink: 0; border: 2px solid var(--error); }
+  .video-circle video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+  #video-timer { font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums; flex: 1; }
+  #video-cancel { background: none; border: none; color: var(--text-dim); font-size: 16px; cursor: pointer; }
+  #video-stop { background: var(--accent); color: var(--accent-text); border: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; }
 
   .voice-player { display: flex; align-items: center; gap: 10px; min-width: 190px; }
   .voice-play-btn { width: 34px; height: 34px; border-radius: 50%; border: none; background: rgba(127,127,127,0.25); color: inherit; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
@@ -261,7 +268,7 @@
       <button type="button" id="notif-btn" class="link-btn">Включить уведомления</button>
       <button type="button" id="notif-test-btn" class="link-btn">Проверить (тест)</button>
       <hr class="theme-panel-divider" />
-      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-07-27-errors</span>
+      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-07-27-roundvideo</span>
     </div>
   </header>
   <div id="select-bar" class="select-bar hidden">
@@ -298,6 +305,9 @@
     <button type="button" id="mic-btn" aria-label="Голосовое сообщение">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
     </button>
+    <button type="button" id="video-btn" aria-label="Круглое видео">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="5" width="15" height="14" rx="2"/><polygon points="23 7 16 12 23 17 23 7"/></svg>
+    </button>
     <button id="send-btn" aria-label="Отправить">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
     </button>
@@ -308,6 +318,16 @@
     <span id="recording-timer">0:00</span>
     <span class="recording-hint">Запись голосового…</span>
     <button type="button" id="recording-stop" aria-label="Отправить голосовое">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+    </button>
+  </div>
+  <div id="video-recording-bar" class="video-recording-bar hidden">
+    <button type="button" id="video-cancel" aria-label="Отменить запись">✕</button>
+    <div class="video-circle">
+      <video id="video-preview" autoplay muted playsinline></video>
+    </div>
+    <span id="video-timer">0:00</span>
+    <button type="button" id="video-stop" aria-label="Отправить видео">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
     </button>
   </div>
@@ -607,6 +627,12 @@ const recordingBar = document.getElementById("recording-bar");
 const recordingTimer = document.getElementById("recording-timer");
 const recordingCancel = document.getElementById("recording-cancel");
 const recordingStop = document.getElementById("recording-stop");
+const videoBtn = document.getElementById("video-btn");
+const videoRecordingBar = document.getElementById("video-recording-bar");
+const videoPreview = document.getElementById("video-preview");
+const videoTimer = document.getElementById("video-timer");
+const videoCancel = document.getElementById("video-cancel");
+const videoStop = document.getElementById("video-stop");
 const sheetBackdrop = document.getElementById("sheet-backdrop");
 const actionSheet = document.getElementById("action-sheet");
 const actionReply = document.getElementById("action-reply");
@@ -1388,6 +1414,77 @@ function stopAndSendRecording() {
 micBtn.addEventListener("click", startRecording);
 recordingCancel.addEventListener("click", cancelRecording);
 recordingStop.addEventListener("click", stopAndSendRecording);
+
+// --- round video recording (Telegram-style circular recording UI; playback uses the regular video player) ---
+let videoMediaRecorder = null;
+let videoMediaStream = null;
+let videoRecordedChunks = [];
+let videoRecordingStart = 0;
+let videoTimerInterval = null;
+const VIDEO_MAX_SECONDS = 60;
+
+async function startVideoRecording() {
+  if (!cryptoKey || videoMediaRecorder) return;
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    showChatError("Запись видео не поддерживается этим браузером.");
+    return;
+  }
+  try {
+    videoMediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
+  } catch {
+    showChatError("Не получилось получить доступ к камере — проверь разрешения.");
+    return;
+  }
+  videoPreview.srcObject = videoMediaStream;
+  videoRecordedChunks = [];
+  videoMediaRecorder = new MediaRecorder(videoMediaStream);
+  videoMediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) videoRecordedChunks.push(e.data); };
+  videoMediaRecorder.start();
+  videoRecordingStart = Date.now();
+  composerRow.classList.add("hidden");
+  videoRecordingBar.classList.remove("hidden");
+  videoTimer.textContent = "0:00";
+  videoTimerInterval = setInterval(() => {
+    const sec = (Date.now() - videoRecordingStart) / 1000;
+    videoTimer.textContent = formatDuration(sec);
+    if (sec >= VIDEO_MAX_SECONDS) stopAndSendVideoRecording();
+  }, 500);
+}
+
+function teardownVideoRecording() {
+  clearInterval(videoTimerInterval);
+  videoTimerInterval = null;
+  if (videoMediaStream) { videoMediaStream.getTracks().forEach((t) => t.stop()); videoMediaStream = null; }
+  videoPreview.srcObject = null;
+  videoMediaRecorder = null;
+  composerRow.classList.remove("hidden");
+  videoRecordingBar.classList.add("hidden");
+}
+
+function cancelVideoRecording() {
+  if (!videoMediaRecorder) return;
+  videoMediaRecorder.onstop = () => { videoRecordedChunks = []; };
+  videoMediaRecorder.stop();
+  teardownVideoRecording();
+}
+
+function stopAndSendVideoRecording() {
+  if (!videoMediaRecorder) return;
+  const mimeType = videoMediaRecorder.mimeType || "video/webm";
+  videoMediaRecorder.onstop = () => {
+    const blob = new Blob(videoRecordedChunks, { type: mimeType });
+    videoRecordedChunks = [];
+    const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+    const file = new File([blob], `video-${Date.now()}.${ext}`, { type: mimeType });
+    uploadOneFile(file, "");
+  };
+  videoMediaRecorder.stop();
+  teardownVideoRecording();
+}
+
+videoBtn.addEventListener("click", startVideoRecording);
+videoCancel.addEventListener("click", cancelVideoRecording);
+videoStop.addEventListener("click", stopAndSendVideoRecording);
 
 async function uploadVoiceMessage(blob, durationSec, mimeType) {
   if (!cryptoKey) return;
