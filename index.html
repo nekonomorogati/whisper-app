@@ -170,6 +170,7 @@
   #video-timer { font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums; flex: 1; }
   #video-cancel { background: none; border: none; color: var(--text-dim); font-size: 16px; cursor: pointer; }
   #video-stop { background: var(--accent); color: var(--accent-text); border: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; }
+  #video-flip { background: none; border: none; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; flex-shrink: 0; }
 
   .voice-player { display: flex; align-items: center; gap: 10px; min-width: 190px; }
   .voice-play-btn { width: 34px; height: 34px; border-radius: 50%; border: none; background: rgba(127,127,127,0.25); color: inherit; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
@@ -268,7 +269,7 @@
       <button type="button" id="notif-btn" class="link-btn">Включить уведомления</button>
       <button type="button" id="notif-test-btn" class="link-btn">Проверить (тест)</button>
       <hr class="theme-panel-divider" />
-      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-07-27-roundvideo</span>
+      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-07-27-camflip</span>
     </div>
   </header>
   <div id="select-bar" class="select-bar hidden">
@@ -326,6 +327,9 @@
     <div class="video-circle">
       <video id="video-preview" autoplay muted playsinline></video>
     </div>
+    <button type="button" id="video-flip" aria-label="Переключить камеру">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+    </button>
     <span id="video-timer">0:00</span>
     <button type="button" id="video-stop" aria-label="Отправить видео">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -633,6 +637,7 @@ const videoPreview = document.getElementById("video-preview");
 const videoTimer = document.getElementById("video-timer");
 const videoCancel = document.getElementById("video-cancel");
 const videoStop = document.getElementById("video-stop");
+const videoFlip = document.getElementById("video-flip");
 const sheetBackdrop = document.getElementById("sheet-backdrop");
 const actionSheet = document.getElementById("action-sheet");
 const actionReply = document.getElementById("action-reply");
@@ -1421,6 +1426,7 @@ let videoMediaStream = null;
 let videoRecordedChunks = [];
 let videoRecordingStart = 0;
 let videoTimerInterval = null;
+let currentFacingMode = "user";
 const VIDEO_MAX_SECONDS = 60;
 
 async function startVideoRecording() {
@@ -1430,12 +1436,13 @@ async function startVideoRecording() {
     return;
   }
   try {
-    videoMediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
+    videoMediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: currentFacingMode }, audio: true });
   } catch {
     showChatError("Не получилось получить доступ к камере — проверь разрешения.");
     return;
   }
   videoPreview.srcObject = videoMediaStream;
+  videoPreview.style.transform = currentFacingMode === "user" ? "scaleX(-1)" : "scaleX(1)";
   videoRecordedChunks = [];
   videoMediaRecorder = new MediaRecorder(videoMediaStream);
   videoMediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) videoRecordedChunks.push(e.data); };
@@ -1449,6 +1456,26 @@ async function startVideoRecording() {
     videoTimer.textContent = formatDuration(sec);
     if (sec >= VIDEO_MAX_SECONDS) stopAndSendVideoRecording();
   }, 500);
+}
+
+async function flipCamera() {
+  if (!videoMediaStream) return;
+  const newFacing = currentFacingMode === "user" ? "environment" : "user";
+  try {
+    const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: newFacing }, audio: false });
+    const newVideoTrack = newStream.getVideoTracks()[0];
+    const oldVideoTrack = videoMediaStream.getVideoTracks()[0];
+    if (oldVideoTrack) {
+      videoMediaStream.removeTrack(oldVideoTrack);
+      oldVideoTrack.stop();
+    }
+    videoMediaStream.addTrack(newVideoTrack);
+    videoPreview.srcObject = videoMediaStream;
+    videoPreview.style.transform = newFacing === "user" ? "scaleX(-1)" : "scaleX(1)";
+    currentFacingMode = newFacing;
+  } catch {
+    showChatError("Не получилось переключить камеру.");
+  }
 }
 
 function teardownVideoRecording() {
@@ -1483,8 +1510,10 @@ function stopAndSendVideoRecording() {
 }
 
 videoBtn.addEventListener("click", startVideoRecording);
+videoFlip.addEventListener("click", flipCamera);
 videoCancel.addEventListener("click", cancelVideoRecording);
 videoStop.addEventListener("click", stopAndSendVideoRecording);
+videoFlip.addEventListener("click", flipCamera);
 
 async function uploadVoiceMessage(blob, durationSec, mimeType) {
   if (!cryptoKey) return;
