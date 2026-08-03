@@ -269,7 +269,7 @@
       <button type="button" id="notif-btn" class="link-btn">Включить уведомления</button>
       <button type="button" id="notif-test-btn" class="link-btn">Проверить (тест)</button>
       <hr class="theme-panel-divider" />
-      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-07-27-camflip</span>
+      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-07-27-camflip2</span>
     </div>
   </header>
   <div id="select-bar" class="select-bar hidden">
@@ -1461,20 +1461,27 @@ async function startVideoRecording() {
 async function flipCamera() {
   if (!videoMediaStream) return;
   const newFacing = currentFacingMode === "user" ? "environment" : "user";
+  const oldVideoTrack = videoMediaStream.getVideoTracks()[0];
+  if (oldVideoTrack) {
+    videoMediaStream.removeTrack(oldVideoTrack);
+    oldVideoTrack.stop();
+  }
   try {
     const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: newFacing }, audio: false });
     const newVideoTrack = newStream.getVideoTracks()[0];
-    const oldVideoTrack = videoMediaStream.getVideoTracks()[0];
-    if (oldVideoTrack) {
-      videoMediaStream.removeTrack(oldVideoTrack);
-      oldVideoTrack.stop();
-    }
     videoMediaStream.addTrack(newVideoTrack);
     videoPreview.srcObject = videoMediaStream;
     videoPreview.style.transform = newFacing === "user" ? "scaleX(-1)" : "scaleX(1)";
     currentFacingMode = newFacing;
-  } catch {
-    showChatError("Не получилось переключить камеру.");
+  } catch (err) {
+    showChatError(`Не получилось переключить камеру: ${err?.message || err}`);
+    try {
+      const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: currentFacingMode }, audio: false });
+      videoMediaStream.addTrack(fallbackStream.getVideoTracks()[0]);
+      videoPreview.srcObject = videoMediaStream;
+    } catch {
+      // camera preview will stay blank until the recording is cancelled and restarted
+    }
   }
 }
 
