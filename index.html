@@ -277,7 +277,7 @@
       <button type="button" id="notif-btn" class="link-btn">Включить уведомления</button>
       <button type="button" id="notif-test-btn" class="link-btn">Проверить (тест)</button>
       <hr class="theme-panel-divider" />
-      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-08-10-racefix</span>
+      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-08-10-replylog</span>
       <button type="button" id="diag-log-btn" class="link-btn">Показать журнал</button>
     </div>
   </header>
@@ -1238,12 +1238,17 @@ async function handleLeave() {
   selectMode = false;
   selectedIds = new Set();
   selectBar.classList.add("hidden");
-  clearComposeContext();
+  clearComposeContext("leave");
   chatScreen.classList.add("hidden");
   joinScreen.classList.remove("hidden");
 }
 
-function clearComposeContext() {
+function clearComposeContext(reason = "unknown") {
+  logDiag({
+    when: new Date().toISOString(), event: "clear-compose", reason,
+    hadReply: !!replyContext, replyId: replyContext?.id,
+    hadEdit: !!editingId, editId: editingId,
+  });
   replyContext = null;
   editingId = null;
   composeBanner.classList.add("hidden");
@@ -1260,6 +1265,7 @@ function startReply(id) {
   else if (m.type === "voice") previewText = `🎤 Голосовое (${formatDuration(m.duration || 0)})`;
   else previewText = m.text;
   replyContext = { id, sender: m.sender, text: previewText };
+  logDiag({ when: new Date().toISOString(), event: "start-reply", targetId: id, targetSender: m.sender });
   composeBanner.classList.remove("hidden");
   composeBannerText.innerHTML = `Ответ <b>${escapeHtml(m.sender)}</b>: ${escapeHtml(truncate(previewText, 50))}`;
   draftInput.focus();
@@ -1270,6 +1276,7 @@ function startEdit(id) {
   if (!m) return;
   replyContext = null;
   editingId = id;
+  logDiag({ when: new Date().toISOString(), event: "start-edit", targetId: id });
   composeBanner.classList.remove("hidden");
   composeBannerText.innerHTML = (m.type === "file" || m.type === "file-group") ? `Подпись к фото/файлу` : `Редактирование сообщения`;
   draftInput.value = (m.type === "file" || m.type === "file-group") ? (m.caption || "") : m.text;
@@ -1316,7 +1323,7 @@ async function handleSend() {
   } catch {
     showChatError("Сообщение не отправилось — проверь соединение и попробуй снова.");
   } finally {
-    clearComposeContext();
+    clearComposeContext("send");
   }
 }
 
@@ -1651,7 +1658,7 @@ async function uploadVoiceMessage(blob, durationSec, mimeType) {
   } catch (err) {
     showChatError(`Не получилось отправить голосовое: ${err?.message || err}`);
   } finally {
-    clearComposeContext();
+    clearComposeContext("voice-upload");
   }
 }
 
@@ -1799,7 +1806,7 @@ async function handleFilesSelected(fileList) {
     attachBtn.disabled = false;
     fileInputMedia.value = "";
     fileInputDoc.value = "";
-    clearComposeContext();
+    clearComposeContext("file-upload");
   }
 }
 
@@ -2347,7 +2354,7 @@ function autoResizeDraft() {
 }
 draftInput.addEventListener("input", autoResizeDraft);
 draftInput.addEventListener("input", updateSendBtnState);
-composeBannerCancel.addEventListener("click", clearComposeContext);
+composeBannerCancel.addEventListener("click", () => clearComposeContext("cancel-x"));
 forgetBtn.addEventListener("click", () => {
   clearSavedLogin();
   nameInput.value = "";
