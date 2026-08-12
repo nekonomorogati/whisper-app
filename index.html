@@ -194,7 +194,7 @@
   .action-sheet button.danger { color: var(--error); }
 
   .confirm-modal { position: fixed; left: 16px; right: 16px; top: 50%; transform: translateY(-50%); background: var(--surface); border-radius: 14px; padding: 20px; z-index: 51; box-shadow: 0 8px 30px rgba(0,0,0,0.4); }
-  #confirm-message { margin: 0 0 18px; font-size: 15px; color: var(--text); line-height: 1.4; }
+  #confirm-message { margin: 0 0 18px; font-size: 13px; color: var(--text); line-height: 1.4; max-height: 55vh; overflow-y: auto; white-space: pre-wrap; word-break: break-word; font-family: monospace; }
   .confirm-buttons { display: flex; justify-content: flex-end; gap: 10px; }
   .confirm-buttons button { background: none; border: none; padding: 9px 14px; font-size: 14.5px; border-radius: 8px; cursor: pointer; color: var(--text); }
   .confirm-buttons button.danger { color: var(--error); font-weight: 600; }
@@ -277,7 +277,8 @@
       <button type="button" id="notif-btn" class="link-btn">Включить уведомления</button>
       <button type="button" id="notif-test-btn" class="link-btn">Проверить (тест)</button>
       <hr class="theme-panel-divider" />
-      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-08-08-safedelete</span>
+      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-08-10-racefix</span>
+      <button type="button" id="diag-log-btn" class="link-btn">Показать журнал</button>
     </div>
   </header>
   <div id="select-bar" class="select-bar hidden">
@@ -630,6 +631,7 @@ const wallpaperResetBtn = document.getElementById("wallpaper-reset-btn");
 const wallpaperInput = document.getElementById("wallpaper-input");
 const notifBtn = document.getElementById("notif-btn");
 const notifTestBtn = document.getElementById("notif-test-btn");
+const diagLogBtn = document.getElementById("diag-log-btn");
 const messagesEl = document.getElementById("messages");
 const presenceBar = document.getElementById("presence-bar");
 const chatError = document.getElementById("chat-error");
@@ -861,6 +863,17 @@ function pluralFiles(n) {
   if ([2, 3, 4].includes(mod10) && ![12, 13, 14].includes(mod100)) return "файла";
   return "файлов";
 }
+const DIAG_LOG_KEY = "whisper:diagLog";
+function logDiag(entry) {
+  try {
+    const raw = localStorage.getItem(DIAG_LOG_KEY);
+    const log = raw ? JSON.parse(raw) : [];
+    log.push(entry);
+    while (log.length > 30) log.shift();
+    localStorage.setItem(DIAG_LOG_KEY, JSON.stringify(log));
+  } catch {}
+}
+
 function pluralMessages(n) {
   const mod10 = n % 10, mod100 = n % 100;
   if (mod10 === 1 && mod100 !== 11) return "сообщение";
@@ -1002,8 +1015,10 @@ function renderFileGroupBody(m) {
   return `${media.length ? `<div class="file-group-media">${mediaHtml}</div>` : ""}${docs.length ? `<div class="file-group-docs">${docsHtml}</div>` : ""}`;
 }
 
+let snapshotSeq = 0;
 async function handleSnapshot(raw) {
   if (!cryptoKey) return;
+  const mySeq = ++snapshotSeq;
   const rawIds = new Set(raw.map((m) => m.id));
   const newlyAdded = [];
 
@@ -1126,9 +1141,28 @@ async function handleSnapshot(raw) {
     }
   }
 
+  // If a newer snapshot arrived while we were still decrypting, our view of "current"
+  // messages is stale — abandon the pruning step here so we don't wrongly delete
+  // something the newer, more up-to-date snapshot already knows about.
+  if (mySeq !== snapshotSeq) {
+    logDiag({ when: new Date().toISOString(), event: "skipped-stale-prune", mySeq, latestSeq: snapshotSeq });
+    return;
+  }
+
   // remove messages that were deleted elsewhere
   for (const id of Array.from(decryptedCache.keys())) {
-    if (!rawIds.has(id)) decryptedCache.delete(id);
+    if (!rawIds.has(id)) {
+      const removed = decryptedCache.get(id);
+      logDiag({
+        when: new Date().toISOString(),
+        event: "pruned-local",
+        id,
+        sender: removed?.sender,
+        type: removed?.type || "text",
+        preview: (removed?.text || removed?.name || removed?.caption || "").slice(0, 40),
+      });
+      decryptedCache.delete(id);
+    }
   }
 
   renderMessages();
@@ -1569,11 +1603,29 @@ function stopAndSendVideoRecording() {
   teardownVideoRecording();
 }
 
+diagLogBtn.addEventListener("click", () => {
+  let log = [];
+  try { log = JSON.parse(localStorage.getItem(DIAG_LOG_KEY) || "[]"); } catch {}
+  confirmMessage.textContent = log.length === 0
+    ? "Журнал пуст — подозрительных событий не найдено."
+    : log.map((e) => JSON.stringify(e)).join("\n\n");
+  confirmDeleteBtn.classList.add("hidden");
+  confirmBackdrop.classList.remove("hidden");
+  confirmModal.classList.remove("hidden");
+  const close = () => {
+    confirmBackdrop.classList.add("hidden");
+    confirmModal.classList.add("hidden");
+    confirmDeleteBtn.classList.remove("hidden");
+    confirmCancelBtn.removeEventListener("click", close);
+    confirmBackdrop.removeEventListener("click", close);
+  };
+  confirmCancelBtn.addEventListener("click", close);
+  confirmBackdrop.addEventListener("click", close);
+});
 videoBtn.addEventListener("click", startVideoRecording);
 videoFlip.addEventListener("click", flipCamera);
 videoCancel.addEventListener("click", cancelVideoRecording);
 videoStop.addEventListener("click", stopAndSendVideoRecording);
-videoFlip.addEventListener("click", flipCamera);
 
 async function uploadVoiceMessage(blob, durationSec, mimeType) {
   if (!cryptoKey) return;
