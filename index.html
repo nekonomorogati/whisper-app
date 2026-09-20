@@ -277,7 +277,7 @@
       <button type="button" id="notif-btn" class="link-btn">Включить уведомления</button>
       <button type="button" id="notif-test-btn" class="link-btn">Проверить (тест)</button>
       <hr class="theme-panel-divider" />
-      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-08-10-replylog</span>
+      <span class="theme-panel-label" style="opacity:0.6;">Версия: build-2026-08-12-fileretry</span>
       <button type="button" id="diag-log-btn" class="link-btn">Показать журнал</button>
     </div>
   </header>
@@ -1356,11 +1356,25 @@ function compressImageBuffer(rawBuf, mimeType, maxDim = 1600, quality = 0.82) {
   });
 }
 
+async function readFileWithRetry(file, attempts = 3, delayMs = 1000) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await file.arrayBuffer();
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  throw lastErr;
+}
+
 async function prepareFileForUpload(file) {
   // Read the original file's bytes FIRST, before anything else — on some Android versions the
-  // content:// reference behind a picked file can be invalidated after a short delay, so every
-  // subsequent step (compression, encryption, hashing) works off this in-memory copy instead.
-  const rawBuf = await file.arrayBuffer();
+  // content:// reference behind a picked file can be invalidated after a short delay (this seems
+  // to happen more often with cloud-backed photos still syncing), so retry a couple of times
+  // before giving up, and every subsequent step works off this in-memory copy instead.
+  const rawBuf = await readFileWithRetry(file);
   if ((file.type || "").startsWith("image/") && file.size > 350 * 1024) {
     try {
       const blob = await compressImageBuffer(rawBuf, file.type);
